@@ -98,6 +98,11 @@ workspace = "~/mindslice"
 mindslice = "mindslice"          # CLI；uv run 时来自本项目 venv
 stage_scheduled_writes = true    # 定时运行的记忆写入一律进 staging/ 待审
 
+# 日报邮件投递：run 结束后发送（去掉「③ 记忆库变更清单」）；smtp 文件不存在时自动跳过。
+[mail]
+enabled = true
+smtp = "~/.config/news-agent/smtp.toml"   # host / port / username / password / to
+
 # ---- Harness：cmd 中 {prompt} 会被替换为渲染后的日报 Prompt；resume 用 {session_id} ----
 [harness]
 default = "agy"

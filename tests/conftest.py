@@ -56,9 +56,11 @@ def project(tmp_path, workspace) -> Path:
         f'[[feeds]]\nid = "feed_a"\nname = "A"\ntier = 1\nurl = "{(feeds / "a.xml").as_uri()}"\n\n'
         f'[[feeds]]\nid = "feed_b"\nname = "B"\ntier = 2\nurl = "{(feeds / "b.xml").as_uri()}"\n')
     config = (ROOT / "config.toml").read_text()
-    config = config.replace("enabled = true", "enabled = false")
+    config = config.replace("enabled = true", "enabled = false").replace("[mail]\nenabled = false", "[mail]\nenabled = true")
     config = config.replace('workspace = "~/mindslice"', f'workspace = "{workspace}"')
     config = config.replace('default = "agy"', 'default = "fake"')
+    # never the real ~/.config/news-agent/smtp.toml: tests that want mail write this file themselves
+    config = config.replace('smtp = "~/.config/news-agent/smtp.toml"', f'smtp = "{proj / "smtp.toml"}"')
     config += (f'\n[harness.fake]\ncmd = ["{sys.executable}", "{ROOT / "tests" / "fake_harness.py"}", "{{prompt}}"]\n'
                'resume = "fake --resume {session_id}"\n')
     (proj / "config.toml").write_text(config)

@@ -154,10 +154,11 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def run_harness(cfg: dict, root: Path, day: str, harness: str, stage: bool, packet: Path, report: Path) -> dict:
+def run_harness(cfg: dict, root: Path, issue: str, title: str, harness: str, stage: bool, packet: Path, report: Path,
+                previous: Path | None = None) -> dict:
     hcfg = cfg["harness"][harness]
     mem = cfg["memory"]
-    run_id = f"{day}-{harness}-{datetime.now().strftime('%H%M%S%f')[:-3]}"
+    run_id = f"{issue}-{harness}-{datetime.now().strftime('%H%M%S%f')[:-3]}"
     run_dir = root / cfg["paths"]["runs"] / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
     report.parent.mkdir(parents=True, exist_ok=True)
@@ -165,9 +166,9 @@ def run_harness(cfg: dict, root: Path, day: str, harness: str, stage: bool, pack
     write_rule = ("本次为定时无人值守运行：所有 MindSlice 写入必须暂存待审——MCP `write` 一律传 `stage=true`，"
                   "CLI 一律加 `--stage`。" if stage else
                   "本次为人工触发运行：确认后的变更可直接写入 `@overlay/invest/*`。")
-    prompt = render_prompt((root / cfg["paths"]["prompt"]).read_text(encoding="utf-8"), date=day,
-                           packet=packet, report=report, workspace=Path(mem["workspace"]).expanduser(),
-                           project=root, write_rule=write_rule)
+    prompt = render_prompt((root / cfg["paths"]["prompt"]).read_text(encoding="utf-8"), date=issue[:10], title=title,
+                           packet=packet, report=report, previous=f"`{previous}`" if previous else "无（这是第一期）",
+                           workspace=Path(mem["workspace"]).expanduser(), project=root, write_rule=write_rule)
     (run_dir / "prompt.md").write_text(prompt, encoding="utf-8")
     cmd = [a.replace("{prompt}", prompt) for a in hcfg["cmd"]]
 
@@ -190,8 +191,6 @@ def run_harness(cfg: dict, root: Path, day: str, harness: str, stage: bool, pack
             report.write_text(text.rstrip() + "\n", encoding="utf-8")
     resume = hcfg["resume"].format(session_id=session_id) if session_id else None
     if report.exists():
-        with report.open("a", encoding="utf-8") as f:
-            f.write(f"\n---\n_run `{run_id}` · harness `{harness}` · 续聊: `{resume or '无 session id'}`_\n")
         latest = report.parent / "latest.md"
         latest.unlink(missing_ok=True)
         latest.symlink_to(report.name)
@@ -200,7 +199,7 @@ def run_harness(cfg: dict, root: Path, day: str, harness: str, stage: bool, pack
     if status == "ok":
         status = ("harness exit code %s" % exit_code if exit_code != 0 else
                   "no report" if not report.exists() else "guardrail problems" if problems else "ok")
-    meta = {"run_id": run_id, "day": day, "harness": harness, "stage": stage, "started": started,
+    meta = {"run_id": run_id, "day": issue, "harness": harness, "stage": stage, "started": started,
             "finished": now_iso(), "exit_code": exit_code, "status": status, "session_id": session_id,
             "resume": resume, "run_dir": str(run_dir), "report": str(report) if report.exists() else None,
             "problems": problems, "cmd": [a if "{prompt}" not in a else a.replace("{prompt}", "<prompt.md>")

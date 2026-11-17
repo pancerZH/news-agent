@@ -1,4 +1,4 @@
-# news-agent · 交互会话引导
+# news-agent
 
 本项目把 **科技/AI 产业链 + 宏观经济** 新闻提炼成每日数据包，由 Agent Harness 分析，并在 `~/mindslice` 的 `invest/*` 命名空间里追踪长期投资逻辑。
 
@@ -27,7 +27,9 @@
 - 交互会话中经用户确认的变更直接写 `@overlay/invest/*`；定时运行的写入进入 `staging/`，用 `mindslice diff` / `mindslice apply` 审阅。
 - 归档：`mindslice bake -w ~/mindslice @invest --prefix invest/`。
 
-## 定时运行（示例，需手动安装）
+## 定时运行（systemd 用户定时器示例：每天 07:30 早报、18:00 晚报，按系统本地时间）
+
+每天两期：`run` 按当前时间自动取 `--edition am|pm`（中午前为 am），数据包、事件簇、报告都按期号存放（如 `reports/2026-11-16-am.md`）。晚报的 Prompt 会带上上一期报告，只写新增信息与进展。邮件标题为「科技/AI + 宏观早报 / 晚报 · 日期」。
 
 `~/.config/systemd/user/news-agent.service`：
 
@@ -35,21 +37,27 @@
 [Service]
 Type=oneshot
 WorkingDirectory=/path/to/news-agent
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
 ExecStart=%h/.local/bin/uv run news-agent run
+TimeoutStartSec=90min
+Nice=5
 ```
 
 `~/.config/systemd/user/news-agent.timer`：
 
 ```ini
 [Timer]
-OnCalendar=*-*-* 07:30
+OnCalendar=*-*-* 07:30:00
+OnCalendar=*-*-* 18:00:00
 Persistent=true
 
 [Install]
 WantedBy=timers.target
 ```
 
-启用：`systemctl --user daemon-reload && systemctl --user enable --now news-agent.timer`。也可在 Harness 内用 `/schedule` 定时执行 `uv run news-agent run`。
+- 查看下次触发：`systemctl --user list-timers news-agent.timer`；日志：`journalctl --user -u news-agent`。
+- 手动立即跑一次：`systemctl --user start news-agent.service`；停用：`systemctl --user disable --now news-agent.timer`。
+- 机器关机或休眠错过的时间点，会在开机后补跑（`Persistent=true`）；如需在未登录时也运行，执行 `loginctl enable-linger`。
 
 ## 讨论纪律
 

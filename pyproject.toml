@@ -12,6 +12,7 @@ dependencies = [
     "trafilatura>=2.0",
     "yfinance>=0.2.50",
     "mindslice>=0.2.0",
+    "markdown-it-py>=3.0",
 ]
 
 [dependency-groups]

@@ -952,6 +952,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "feedparser" },
+    { name = "markdown-it-py" },
     { name = "mindslice" },
     { name = "numpy" },
     { name = "sentence-transformers" },
@@ -969,6 +970,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "feedparser", specifier = ">=6.0" },
+    { name = "markdown-it-py", specifier = ">=3.0" },
     { name = "mindslice", specifier = ">=0.2.0" },
     { name = "numpy", specifier = ">=1.26" },
     { name = "sentence-transformers", specifier = ">=6.0" },

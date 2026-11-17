@@ -35,16 +35,16 @@ def test_prep_run_verify_end_to_end(project, workspace, monkeypatch, capsys):
     day = date.today().isoformat()
 
     assert cli.main([*config, "init-memory"]) == 0
-    assert cli.main([*config, "prep"]) == 0
-    packet = (project / f"data/packets/{day}.md").read_text()
+    assert cli.main([*config, "prep", "--edition", "am"]) == 0
+    packet = (project / f"data/packets/{day}-am.md").read_text()
     assert "多源交叉簇 1" in packet and "(feed_a, feed_b)" in packet  # the two Rubin links are one URL
 
-    assert cli.main([*config, "run"]) == 0
+    assert cli.main([*config, "run", "--edition", "am"]) == 0
     out = capsys.readouterr().out
     assert "status: ok" in out and "fake --resume fake-session-123" in out
-    report = project / f"reports/{day}.md"
-    assert "核心信号提炼" in report.read_text() and "fake-session-123" in report.read_text()
-    assert os.readlink(project / "reports/latest.md") == f"{day}.md"
+    report = project / f"reports/{day}-am.md"
+    assert "核心信号提炼" in report.read_text() and "fake-session-123" not in report.read_text()
+    assert os.readlink(project / "reports/latest.md") == f"{day}-am.md"
     assert (workspace / "staging/invest/theses/ai-compute-capex.md").exists()  # staged, not live
     assert "fake evidence" not in (workspace / "overlay/invest/theses/ai-compute-capex.md").read_text()
     env = json.loads((project / "env.json").read_text())
@@ -53,6 +53,13 @@ def test_prep_run_verify_end_to_end(project, workspace, monkeypatch, capsys):
     assert cli.main([*config, "verify"]) == 0
     assert cli.main([*config, "runs"]) == 0
     assert "fake-session-123" in capsys.readouterr().out
+
+    # the evening edition gets its own packet and report, and its prompt points at the morning report
+    assert cli.main([*config, "run", "--edition", "pm"]) == 0
+    assert (project / f"reports/{day}-am.md").exists() and (project / f"reports/{day}-pm.md").exists()
+    [pm_prompt] = (project / "data/runs").glob(f"{day}-pm-fake-*/prompt.md")
+    text = pm_prompt.read_text()
+    assert f"reports/{day}-am.md" in text and f"# 科技/AI + 宏观晚报 · {day}" in text
 
 
 def test_unstaged_write_in_scheduled_run_fails(project, workspace, monkeypatch, capsys):

@@ -8,7 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
-from . import collect, db, embed_cluster, market, runner
+from . import collect, db, embed_cluster, mail, market, runner
 
 DEFAULT_CONFIG = Path(__file__).resolve().parents[2] / "config.toml"
 
@@ -28,10 +28,24 @@ def iso_hours_ago(hours: int) -> str:
     return (datetime.now(timezone.utc) - timedelta(hours=hours)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+EDITIONS = {"am": "早报", "pm": "晚报"}
+
+
+def issue_of(day: str, edition: str | None) -> tuple[str, str]:
+    """(issue key such as 2026-11-16-am, report title). Without an edition: am before noon, pm after."""
+    edition = edition or ("am" if datetime.now().hour < 12 else "pm")
+    return f"{day}-{edition}", f"科技/AI + 宏观{EDITIONS[edition]} · {day}"
+
+
+def previous_report(reports: Path, issue: str) -> Path | None:
+    older = sorted(p for p in reports.glob("????-??-??-??.md") if p.stem < issue)
+    return older[-1] if older else None
+
+
 # ---------------------------------------------------------------- prep
 
 
-def prep(cfg: dict, root: Path, day: str) -> Path:
+def prep(cfg: dict, root: Path, issue: str) -> Path:
     conn = db.connect(root / cfg["paths"]["db"])
     since = iso_hours_ago(cfg["collect"]["window_hours"])
 
@@ -56,17 +70,17 @@ def prep(cfg: dict, root: Path, day: str) -> Path:
     snap = None
     if cfg["market"]["enabled"]:
         snap = market.snapshot(cfg["market"]["indices"], cfg["watchlist"]["tickers"], c["timeout_seconds"])
-        db.save_snapshot(conn, day, snap)
+        db.save_snapshot(conn, issue, snap)
         log("market: " + ", ".join(k for k in ("treasury", "indices", "watchlist") if snap.get(k)))
 
     n = embed_cluster.embed_missing(conn, db.window_items(conn, since), cfg["embedding"])
     log(f"embed: {n} items encoded with {cfg['embedding']['model']}")
     clusters = embed_cluster.build_clusters(db.window_items(conn, since), cfg)
-    for cl, cid in zip(clusters, db.save_clusters(conn, day, clusters)):
+    for cl, cid in zip(clusters, db.save_clusters(conn, issue, clusters)):
         cl["id"] = cid
-    packet = root / cfg["paths"]["packets"] / f"{day}.md"
+    packet = root / cfg["paths"]["packets"] / f"{issue}.md"
     packet.parent.mkdir(parents=True, exist_ok=True)
-    packet.write_text(embed_cluster.render_packet(day, since, clusters, market.render(snap), errors,
+    packet.write_text(embed_cluster.render_packet(issue, since, clusters, market.render(snap), errors,
                                                   cfg["cluster"]["top_k"], cfg["cluster"]["macro_k"]), encoding="utf-8")
     log(f"cluster: {len(clusters)} clusters -> {packet}")
     return packet
@@ -113,6 +127,25 @@ def init_memory(cfg: dict, root: Path) -> list[str]:
     return created
 
 
+# ---------------------------------------------------------------- mail
+
+
+def deliver(cfg: dict, title: str, report: Path, status: str = "ok") -> bool:
+    """Email the report if mail is enabled and configured. Returns False only when sending failed."""
+    smtp = Path(cfg["mail"]["smtp"]).expanduser()
+    if not cfg["mail"]["enabled"]:
+        return True
+    if not smtp.exists():
+        log(f"mail: skipped, {smtp} not found")
+        return True
+    try:
+        log(f"mail: sent to {', '.join(mail.send(report, title, smtp, status))}")
+        return True
+    except Exception as e:
+        log(f"mail: failed: {type(e).__name__}: {e}")
+        return False
+
+
 # ---------------------------------------------------------------- search / show / runs
 
 
@@ -138,12 +171,15 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("init-memory", help="seed invest/* cards in the MindSlice workspace (idempotent)")
-    p = sub.add_parser("prep", help="collect, embed, cluster and write today's packet")
+    edition = {"choices": sorted(EDITIONS), "help": "am (早报) or pm (晚报); default: by the current hour"}
+    p = sub.add_parser("prep", help="collect, embed, cluster and write this edition's packet")
     p.add_argument("--day", default=date.today().isoformat())
+    p.add_argument("--edition", **edition)
     p = sub.add_parser("run", help="prep (if needed), run the daily brief in a harness, then verify")
     p.add_argument("--harness")
     p.add_argument("--day", default=date.today().isoformat())
-    p.add_argument("--prep", action="store_true", help="re-run prep even if today's packet exists")
+    p.add_argument("--edition", **edition)
+    p.add_argument("--prep", action="store_true", help="re-run prep even if this edition's packet exists")
     p.add_argument("--no-stage", action="store_true", help="let the harness write memory directly (no staging)")
     p = sub.add_parser("search", help="keyword search over collected items")
     p.add_argument("terms", nargs="+")
@@ -155,6 +191,10 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--since", help="also check history events since this ISO time")
     p.add_argument("--staged-only", action="store_true", help="with --since: direct (unstaged) writes are problems")
     sub.add_parser("runs", help="list recent harness runs and how to resume them")
+    p = sub.add_parser("mail", help="email a report (without the memory-change section)")
+    p.add_argument("--day", default=date.today().isoformat())
+    p.add_argument("--edition", **edition)
+    p.add_argument("--html", type=Path, help="write the HTML email body to this file instead of sending")
     args = ap.parse_args(argv)
     cfg, root = load_config(args.config)
 
@@ -162,18 +202,21 @@ def main(argv: list[str] | None = None) -> int:
         created = init_memory(cfg, root)
         print(f"created {len(created)} cards" + "".join(f"\n  {c}" for c in created))
         return 0
+    if args.cmd in ("prep", "run", "mail"):
+        issue, title = issue_of(args.day, args.edition)
     if args.cmd == "prep":
-        print(prep(cfg, root, args.day))
+        print(prep(cfg, root, issue))
         return 0
     if args.cmd == "run":
         harness = args.harness or cfg["harness"]["default"]
-        packet = root / cfg["paths"]["packets"] / f"{args.day}.md"
+        packet = root / cfg["paths"]["packets"] / f"{issue}.md"
         if args.prep or not packet.exists():
-            prep(cfg, root, args.day)
+            prep(cfg, root, issue)
         stage = cfg["memory"]["stage_scheduled_writes"] and not args.no_stage
-        report = root / cfg["paths"]["reports"] / f"{args.day}.md"
-        log(f"run: {harness} (stage={stage}) ...")
-        meta = runner.run_harness(cfg, root, args.day, harness, stage, packet, report)
+        report = root / cfg["paths"]["reports"] / f"{issue}.md"
+        previous = previous_report(report.parent, issue)
+        log(f"run: {issue} with {harness} (stage={stage}, previous={previous.name if previous else None}) ...")
+        meta = runner.run_harness(cfg, root, issue, title, harness, stage, packet, report, previous)
         conn = db.connect(root / cfg["paths"]["db"])
         with conn:
             conn.execute("INSERT INTO runs VALUES (?,?,?,?,?,?,?,?,?,?,?)",
@@ -182,7 +225,23 @@ def main(argv: list[str] | None = None) -> int:
         print(f"status: {meta['status']}\nreport: {meta['report']}\nlogs:   {meta['run_dir']}\nresume: {meta['resume']}")
         for prob in meta["problems"]:
             print(f"  ! {prob}")
-        return 0 if meta["status"] == "ok" else 1
+        delivered = deliver(cfg, title, report, meta["status"]) if meta["report"] else True
+        return 0 if meta["status"] == "ok" and delivered else 1
+
+    if args.cmd == "mail":
+        report = root / cfg["paths"]["reports"] / f"{issue}.md"
+        if not report.exists():
+            print(f"no report {report}", file=sys.stderr)
+            return 1
+        if args.html:
+            text = mail.public_text(report.read_text(encoding="utf-8"))
+            args.html.write_text(mail.render_html(text, title), encoding="utf-8")
+            print(args.html)
+            return 0
+        if not Path(cfg["mail"]["smtp"]).expanduser().exists():
+            print(f"missing {cfg['mail']['smtp']}", file=sys.stderr)
+            return 1
+        return 0 if deliver(cfg, title, report) else 1
 
     conn = db.connect(root / cfg["paths"]["db"])
     if args.cmd == "search":
