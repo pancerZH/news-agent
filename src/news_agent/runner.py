@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 import subprocess
 import time
 import tomllib
@@ -104,6 +105,15 @@ def invest_slice_dir(ws: Path) -> Path | None:
     return None
 
 
+def history_since(ws: Path, since: str) -> list[dict]:
+    history = ws / ".history" / "changes.jsonl"
+    if not history.exists():
+        return []
+    start = datetime.fromisoformat(since)
+    events = (json.loads(line) for line in history.read_text(encoding="utf-8").splitlines())
+    return [e for e in events if datetime.fromisoformat(e["timestamp"]) >= start]
+
+
 def verify(mem: dict, since: str | None = None, staged_only: bool = False) -> list[str]:
     """Problems with the invest/* memory: always-loaded or untagged cards, invest cards outside the prefix,
     writes outside invest/ (or unstaged ones in a scheduled run) since `since`, validate errors, broken links."""
@@ -123,18 +133,14 @@ def verify(mem: dict, since: str | None = None, staged_only: bool = False) -> li
             elif "invest" in meta.get("tags", []):
                 problems.append(f"带 invest 标签的卡片越界（不在 invest/ 下）: {md}")
 
-    history = ws / ".history" / "changes.jsonl"
-    if since and history.exists():
-        start = datetime.fromisoformat(since)
-        for line in history.read_text(encoding="utf-8").splitlines():
-            e = json.loads(line)
-            if e.get("origin") != "write" or "address" not in e or datetime.fromisoformat(e["timestamp"]) < start:
-                continue
-            path = e["address"].split("/", 1)[1]
-            if not path.startswith("invest/"):
-                problems.append(f"运行期间越界写入: {e['address']} ({e['op']})（若同时有其它会话在写记忆库，可能误报）")
-            elif staged_only and e["event"] == "applied":
-                problems.append(f"定时运行中未经 staging 的直写: {e['address']} ({e['op']})")
+    for e in history_since(ws, since) if since else []:
+        if e.get("origin") != "write" or "address" not in e:
+            continue
+        path = e["address"].split("/", 1)[1]
+        if not path.startswith("invest/"):
+            problems.append(f"运行期间越界写入: {e['address']} ({e['op']})（若同时有其它会话在写记忆库，可能误报）")
+        elif staged_only and e["event"] == "applied":
+            problems.append(f"定时运行中未经 staging 的直写: {e['address']} ({e['op']})")
 
     res = mindslice(mem, "validate")
     try:
@@ -154,55 +160,140 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def launch(cfg: dict, root: Path, run_dir: Path, harness: str, prompt: str) -> dict:
+    """One non-interactive harness session with logs in run_dir: exit_code, status, output, session_id, resume."""
+    hcfg = cfg["harness"][harness]
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / "prompt.md").write_text(prompt, encoding="utf-8")
+    exit_code, status = None, "ok"
+    with open(run_dir / "stdout.log", "w") as out, open(run_dir / "stderr.log", "w") as err:
+        try:
+            exit_code = subprocess.run([a.replace("{prompt}", prompt) for a in hcfg["cmd"]], cwd=root, env=clean_env(),
+                                       stdin=subprocess.DEVNULL, stdout=out, stderr=err,
+                                       timeout=cfg["harness"]["timeout_minutes"] * 60).returncode
+        except subprocess.TimeoutExpired:
+            status = "timeout"
+        except FileNotFoundError as e:
+            status = f"harness not found: {e}"
+    if status == "ok" and exit_code != 0:
+        status = f"harness exit code {exit_code}"
+    output = (run_dir / "stdout.log").read_text(errors="replace")
+    session_id = find_session_id(output)
+    return {"exit_code": exit_code, "status": status, "output": output, "session_id": session_id,
+            "resume": hcfg["resume"].format(session_id=session_id) if session_id else None,
+            "cmd": [a if "{prompt}" not in a else a.replace("{prompt}", "<prompt.md>") for a in hcfg["cmd"]]}
+
+
+def new_run_dir(cfg: dict, root: Path, name: str) -> tuple[str, Path]:
+    run_id = f"{name}-{datetime.now().strftime('%H%M%S%f')[:-3]}"
+    return run_id, root / cfg["paths"]["runs"] / run_id
+
+
+def save_meta(run_dir: Path, meta: dict) -> dict:
+    (run_dir / "meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return meta
+
+
 def run_harness(cfg: dict, root: Path, issue: str, title: str, harness: str, stage: bool, packet: Path, report: Path,
                 previous: Path | None = None) -> dict:
-    hcfg = cfg["harness"][harness]
     mem = cfg["memory"]
-    run_id = f"{issue}-{harness}-{datetime.now().strftime('%H%M%S%f')[:-3]}"
-    run_dir = root / cfg["paths"]["runs"] / run_id
-    run_dir.mkdir(parents=True, exist_ok=True)
+    run_id, run_dir = new_run_dir(cfg, root, f"{issue}-{harness}")
     report.parent.mkdir(parents=True, exist_ok=True)
-
     write_rule = ("本次为定时无人值守运行：所有 MindSlice 写入必须暂存待审——MCP `write` 一律传 `stage=true`，"
                   "CLI 一律加 `--stage`。" if stage else
                   "本次为人工触发运行：确认后的变更可直接写入 `@overlay/invest/*`。")
     prompt = render_prompt((root / cfg["paths"]["prompt"]).read_text(encoding="utf-8"), date=issue[:10], title=title,
                            packet=packet, report=report, previous=f"`{previous}`" if previous else "无（这是第一期）",
                            workspace=Path(mem["workspace"]).expanduser(), project=root, write_rule=write_rule)
-    (run_dir / "prompt.md").write_text(prompt, encoding="utf-8")
-    cmd = [a.replace("{prompt}", prompt) for a in hcfg["cmd"]]
-
     started, t0 = now_iso(), time.time()
-    exit_code, status = None, "ok"
-    with open(run_dir / "stdout.log", "w") as out, open(run_dir / "stderr.log", "w") as err:
-        try:
-            exit_code = subprocess.run(cmd, cwd=root, env=clean_env(), stdin=subprocess.DEVNULL, stdout=out,
-                                       stderr=err, timeout=cfg["harness"]["timeout_minutes"] * 60).returncode
-        except subprocess.TimeoutExpired:
-            status = "timeout"
-        except FileNotFoundError as e:
-            status = f"harness not found: {e}"
-    output = (run_dir / "stdout.log").read_text(errors="replace")
-
-    session_id = find_session_id(output)
+    res = launch(cfg, root, run_dir, harness, prompt)
     if not report.exists() or report.stat().st_mtime < t0:
-        text = final_text(output)
+        text = final_text(res["output"])
         if text:
             report.write_text(text.rstrip() + "\n", encoding="utf-8")
-    resume = hcfg["resume"].format(session_id=session_id) if session_id else None
     if report.exists():
         latest = report.parent / "latest.md"
         latest.unlink(missing_ok=True)
         latest.symlink_to(report.name)
 
     problems = verify(mem, since=started, staged_only=stage)
-    if status == "ok":
-        status = ("harness exit code %s" % exit_code if exit_code != 0 else
-                  "no report" if not report.exists() else "guardrail problems" if problems else "ok")
-    meta = {"run_id": run_id, "day": issue, "harness": harness, "stage": stage, "started": started,
-            "finished": now_iso(), "exit_code": exit_code, "status": status, "session_id": session_id,
-            "resume": resume, "run_dir": str(run_dir), "report": str(report) if report.exists() else None,
-            "problems": problems, "cmd": [a if "{prompt}" not in a else a.replace("{prompt}", "<prompt.md>")
-                                          for a in hcfg["cmd"]]}
-    (run_dir / "meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    return meta
+    status = res["status"] if res["status"] != "ok" else (
+        "no report" if not report.exists() else "guardrail problems" if problems else "ok")
+    return save_meta(run_dir, {
+        "run_id": run_id, "day": issue, "harness": harness, "stage": stage, "started": started, "finished": now_iso(),
+        "exit_code": res["exit_code"], "status": status, "session_id": res["session_id"], "resume": res["resume"],
+        "run_dir": str(run_dir), "report": str(report) if report.exists() else None, "problems": problems,
+        "cmd": res["cmd"]})
+
+
+# ---------------------------------------------------------------- memory review
+
+
+def pending_invest(mem: dict) -> list[dict]:
+    """Staged changes under @overlay/invest/ (other staged changes, e.g. always-loaded cards, are never touched)."""
+    return [i for i in json.loads(mindslice(mem, "diff").stdout)["items"] if i["address"].startswith("@overlay/invest/")]
+
+
+def load_decisions(path: Path, output: str) -> list[dict]:
+    """The reviewer's JSON array from its decisions file, else from its final answer."""
+    candidates = [path.read_text(encoding="utf-8")] if path.exists() else []
+    candidates += re.findall(r"\[.*\]", final_text(output) or "", re.S)
+    for text in candidates:
+        try:
+            value = json.loads(text)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(value, list):
+            return [d for d in value if isinstance(d, dict)]
+    return []
+
+
+def run_review(cfg: dict, root: Path, issue: str, harness: str, packet: Path, report: Path) -> dict:
+    """An independent session judges each staged invest/* change; this code then applies or discards it.
+
+    The reviewer only writes a decisions file. Its decisions are executed only for pending invest/* addresses and only
+    if memory did not change while it ran; changes without a decision stay pending."""
+    mem = cfg["memory"]
+    pending = pending_invest(mem)
+    if not pending:
+        return {"run_id": None, "status": "nothing to review", "problems": [], "decisions": []}
+    run_id, run_dir = new_run_dir(cfg, root, f"{issue}-review-{harness}")
+    run_dir.mkdir(parents=True, exist_ok=True)
+    changes, decisions_file = run_dir / "pending.json", run_dir / "decisions.json"
+    changes.write_text(json.dumps([{"address": i["address"], "change": i["change"],
+                                    "reasons": [c.get("reason") for c in i.get("changes", [])], "diff": i["diff"]}
+                                   for i in pending], ensure_ascii=False, indent=2), encoding="utf-8")
+    prompt = render_prompt((root / cfg["paths"]["review_prompt"]).read_text(encoding="utf-8"), changes=changes,
+                           decisions=decisions_file, report=report, packet=packet, project=root,
+                           workspace=Path(mem["workspace"]).expanduser())
+    started = now_iso()
+    res = launch(cfg, root, run_dir, harness, prompt)
+    ws = Path(mem["workspace"]).expanduser()
+    problems = [f"审阅期间记忆库被改动，未执行任何决定: {e.get('event')} {e.get('address')}"
+                for e in history_since(ws, started) if e.get("address")]
+    tampered = bool(problems)
+    decisions = {d.get("address"): d for d in load_decisions(decisions_file, res["output"])}
+    outcome = []
+    for item in pending:
+        d = decisions.pop(item["address"], {})
+        action = None if tampered else d.get("decision")
+        if action in ("apply", "discard"):
+            r = mindslice(mem, action, item["address"])
+            if r.returncode != 0:
+                problems.append(f"{action} 失败: {item['address']}: {r.stderr.strip() or r.stdout.strip()}")
+                action = "failed"
+        else:
+            action = "pending"
+            if not tampered:
+                problems.append(f"审阅未给出决定，保留待审: {item['address']}")
+        outcome.append({"address": item["address"], "decision": action, "reason": d.get("reason", "")})
+    problems += [f"审阅结果含非待审地址，已忽略: {a}" for a in decisions]
+    problems += verify(mem)
+    (run_dir / "review.md").write_text("| 卡片 | 决定 | 理由 |\n| :--- | :--- | :--- |\n" + "".join(
+        f"| {o['address']} | {o['decision']} | {o['reason']} |\n" for o in outcome), encoding="utf-8")
+    status = res["status"] if res["status"] != "ok" else "guardrail problems" if problems else "ok"
+    return save_meta(run_dir, {
+        "run_id": run_id, "day": issue, "harness": harness, "stage": False, "started": started, "finished": now_iso(),
+        "exit_code": res["exit_code"], "status": status, "session_id": res["session_id"], "resume": res["resume"],
+        "run_dir": str(run_dir), "report": str(run_dir / "review.md"), "problems": problems, "decisions": outcome,
+        "cmd": res["cmd"]})

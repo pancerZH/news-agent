@@ -96,3 +96,16 @@ def test_run_mails_report_only_when_configured(project, workspace, monkeypatch, 
     assert msg["Subject"] == f"科技/AI + 宏观晚报 · {date.today().isoformat()}"
     assert cli.main([*config, "mail", "--edition", "pm", "--html", str(project / "preview.html")]) == 0
     assert "<h1>" in (project / "preview.html").read_text()
+
+
+def test_cluster_ids_are_dropped_from_reader_text():
+    cases = {
+        "- **NVIDIA 治理危机（C158, C159, C160）**": "- **NVIDIA 治理危机**",
+        "[FT](u)（`C161`）报道": "[FT](u)报道",
+        "[Wired](u)（`C171`，HN 87 分 / 87 评论）报道": "[Wired](u)（HN 87 分 / 87 评论）报道",
+        "（`C209`，[摘要](u) `C216`）在过去": "（[摘要](u)）在过去",
+        "DRAM 诉讼（`C320`, `C321`）、HF": "DRAM 诉讼、HF",
+        "SC26 大会与 C2C 互连": "SC26 大会与 C2C 互连",
+    }
+    for raw, want in cases.items():
+        assert mail.public_text(raw).rstrip() == want

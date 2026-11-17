@@ -10,6 +10,7 @@
 | `uv run news-agent run [--harness agy\|claude\|codex] [--no-stage]` | 必要时先 prep，再拉起 Harness 写 `reports/YYYY-MM-DD.md`，最后 verify |
 | `uv run news-agent show C123` | 打印一个事件簇的全部条目与 HN 评论 |
 | `uv run news-agent search 关键词 [--days 30]` | 历史条目关键词检索 |
+| `uv run news-agent review` | 让独立会话审阅暂存的 `invest/*` 变更，由程序执行 apply/discard（`run` 结束后自动执行） |
 | `uv run news-agent runs` | 最近的运行记录、日志目录与续聊命令 |
 | `uv run news-agent verify` | 记忆护栏校验（无 always、标签/前缀合规、validate 零错误、无断链） |
 | `uv run news-agent init-memory` | 幂等创建 watchlist / 宏观 / 主线 / 实体种子卡 |
@@ -24,7 +25,7 @@
 - 主线卡正文：`核心假设 (Premise)` / `当前状态与置信度 (Conviction)` / `关键验证记录 (Evidence)`（`[YYYY-MM-DD] ...`）/ `预设证伪条件 (Kill Criteria)`。
 - 实体卡 `aliases` 必填中英文名、Ticker、核心产品代号（便于 BM25 词法召回）。
 - 链接：同在 `@overlay` 写 `[[invest/...]]`；引用已烘焙进 `@invest` 的卡片写 `[[@invest/invest/...]]`。
-- 交互会话中经用户确认的变更直接写 `@overlay/invest/*`；定时运行的写入进入 `staging/`，用 `mindslice diff` / `mindslice apply` 审阅。
+- 交互会话中经用户确认的变更直接写 `@overlay/invest/*`；定时运行的写入进入 `staging/`，运行结束后由独立审阅会话逐条判断（出处、慢变量、去重、结构、结论克制），审阅 Agent 只写决定，由程序只对 `@overlay/invest/*` 执行 apply/discard；审阅期间记忆库若有改动则不执行任何决定。审阅记录在 `data/runs/*-review-*/review.md`。
 - 归档：`mindslice bake -w ~/mindslice @invest --prefix invest/`。
 
 ## 定时运行（systemd 用户定时器示例：每天 07:30 早报、18:00 晚报，按系统本地时间）

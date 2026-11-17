@@ -1,4 +1,4 @@
-"""news-agent CLI: init-memory / prep / run / search / show / verify / runs."""
+"""news-agent CLI: init-memory / prep / run / review / search / show / verify / runs / mail."""
 
 import argparse
 import json
@@ -146,6 +146,29 @@ def deliver(cfg: dict, title: str, report: Path, status: str = "ok") -> bool:
         return False
 
 
+def record_run(cfg: dict, root: Path, meta: dict) -> None:
+    conn = db.connect(root / cfg["paths"]["db"])
+    with conn:
+        conn.execute("INSERT INTO runs VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                     (meta["run_id"], meta["day"], meta["harness"], meta["started"], meta["finished"], meta["exit_code"],
+                      meta["session_id"], meta["resume"], meta["status"], meta["run_dir"], meta["report"]))
+
+
+def review(cfg: dict, root: Path, issue: str, harness: str, packet: Path, report: Path) -> bool:
+    """Run the memory review session and print its outcome. Returns False when it had problems."""
+    meta = runner.run_review(cfg, root, issue, harness, packet, report)
+    if meta["run_id"] is None:
+        log("review: no staged invest/* changes")
+        return True
+    record_run(cfg, root, meta)
+    counts = {k: sum(d["decision"] == k for d in meta["decisions"]) for k in ("apply", "discard", "pending", "failed")}
+    print(f"review: {meta['status']} · applied {counts['apply']}, discarded {counts['discard']}, "
+          f"pending {counts['pending']}, failed {counts['failed']}\n  log: {meta['report']}")
+    for prob in meta["problems"]:
+        print(f"  ! {prob}")
+    return meta["status"] == "ok"
+
+
 # ---------------------------------------------------------------- search / show / runs
 
 
@@ -181,6 +204,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--edition", **edition)
     p.add_argument("--prep", action="store_true", help="re-run prep even if this edition's packet exists")
     p.add_argument("--no-stage", action="store_true", help="let the harness write memory directly (no staging)")
+    p = sub.add_parser("review", help="let an independent session review the staged invest/* memory changes")
+    p.add_argument("--harness")
     p = sub.add_parser("search", help="keyword search over collected items")
     p.add_argument("terms", nargs="+")
     p.add_argument("--days", type=int, default=30)
@@ -217,16 +242,19 @@ def main(argv: list[str] | None = None) -> int:
         previous = previous_report(report.parent, issue)
         log(f"run: {issue} with {harness} (stage={stage}, previous={previous.name if previous else None}) ...")
         meta = runner.run_harness(cfg, root, issue, title, harness, stage, packet, report, previous)
-        conn = db.connect(root / cfg["paths"]["db"])
-        with conn:
-            conn.execute("INSERT INTO runs VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-                         (meta["run_id"], meta["day"], harness, meta["started"], meta["finished"], meta["exit_code"],
-                          meta["session_id"], meta["resume"], meta["status"], meta["run_dir"], meta["report"]))
+        record_run(cfg, root, meta)
         print(f"status: {meta['status']}\nreport: {meta['report']}\nlogs:   {meta['run_dir']}\nresume: {meta['resume']}")
         for prob in meta["problems"]:
             print(f"  ! {prob}")
-        delivered = deliver(cfg, title, report, meta["status"]) if meta["report"] else True
-        return 0 if meta["status"] == "ok" and delivered else 1
+        ok = deliver(cfg, title, report, meta["status"]) if meta["report"] else True
+        if stage and cfg["review"]["enabled"]:
+            ok = review(cfg, root, issue, harness, packet, report) and ok
+        return 0 if meta["status"] == "ok" and ok else 1
+
+    if args.cmd == "review":
+        report = (root / cfg["paths"]["reports"] / "latest.md").resolve()
+        packet = root / cfg["paths"]["packets"] / f"{report.stem}.md"
+        return 0 if review(cfg, root, report.stem, args.harness or cfg["harness"]["default"], packet, report) else 1
 
     if args.cmd == "mail":
         report = root / cfg["paths"]["reports"] / f"{issue}.md"

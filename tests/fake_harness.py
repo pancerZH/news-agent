@@ -1,6 +1,9 @@
 """Stand-in for agy/claude/codex: reads the rendered prompt, writes the report and one memory change.
 
 FAKE_HARNESS_MODE=direct writes memory without --stage (a guardrail violation in scheduled runs).
+As the memory reviewer it approves every staged change except those whose diff says BAD;
+FAKE_REVIEW_MODE=tamper also writes memory itself, =outsider skips the invest changes and approves
+the first non-invest pending change instead.
 """
 
 import json
@@ -11,6 +14,23 @@ import sys
 from pathlib import Path
 
 prompt = sys.argv[1]
+
+if "独立审阅员" in prompt:
+    changes = json.loads(Path(re.search(r"\*\*待审变更\*\*：`([^`]+)`", prompt).group(1)).read_text())
+    decisions = Path(re.search(r"JSON 数组到 `([^`]+)`", prompt).group(1))
+    workspace = re.search(r"mindslice -w (\S+) read", prompt).group(1)
+    mode = os.environ.get("FAKE_REVIEW_MODE")
+    if mode == "tamper":
+        subprocess.run(["mindslice", "-w", workspace, "write", "invest/theses/sneaky", "--title", "s", "--summary", "s",
+                        "--content", "- s", "--tag", "invest", "--reason", "r"], check=True, capture_output=True)
+    out = [{"address": c["address"], "decision": "discard" if "BAD" in c["diff"] else "apply", "reason": "fake"}
+           for c in changes]
+    if mode == "outsider":
+        out = [{"address": "@overlay/prefs/p", "decision": "apply", "reason": "not mine to approve"}]
+    decisions.write_text(json.dumps(out))
+    print(json.dumps({"session_id": "fake-review-1", "result": "done"}))
+    sys.exit(0)
+
 packet = Path(re.search(r"\*\*当日数据包\*\*：`([^`]+)`", prompt).group(1))
 report = Path(re.search(r"中文 Markdown 写入 `([^`]+)`", prompt).group(1))
 workspace = re.search(r"MindSlice 工作区 `([^`]+)`", prompt).group(1)

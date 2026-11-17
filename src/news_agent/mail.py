@@ -24,13 +24,27 @@ hr { border: none; border-top: 1px solid #e5e7eb; margin: 24px 0; }
 """
 
 
+CLUSTER = r"`?(?<![A-Za-z0-9])C\d+(?![A-Za-z0-9])`?"  # C158, `C158`; not SC26 or C2C
+SEP = r"\s*[,，、/;；]\s*"
+
+
+def scrub_clusters(text: str) -> str:
+    """Drop cluster ids (kept in the report file for fact checking) and tidy the brackets they leave."""
+    text = re.sub(rf"\s*[（(]\s*{CLUSTER}(?:{SEP}{CLUSTER})*\s*[）)]", "", text)  # "（C158, C161）"
+    text = re.sub(rf"{CLUSTER}(?:{SEP}{CLUSTER})*(?:{SEP}|\s+)?", "", text)  # "（`C171`，HN 87 分）"
+    text = re.sub(r"（\s*[,，、;；]?\s*", "（", text)
+    text = re.sub(r"\s*[,，、;；]?\s*）", "）", text)
+    return re.sub(r"\s*（）", "", text)
+
+
 def public_text(report_md: str) -> str:
     """The report for readers: everything from the "## ③" memory-change section on is dropped, and internal
-    MindSlice card paths (`invest/...`) are scrubbed from what is left."""
+    MindSlice card paths (`invest/...`) and cluster ids (`C158`) are scrubbed from what is left."""
     m = re.search(r"^#{1,6}\s*③.*$", report_md, re.M)
     text = report_md[: m.start()] if m else report_md
     text = re.sub(r"\s*[（(]\s*`?invest/[\w/.-]+`?\s*[）)]", "", text)  # "标题（`invest/theses/x`）"
     text = re.sub(r"`invest/[\w/.-]+`", "", text)
+    text = scrub_clusters(text)
     return re.sub(r"(\s*\n-{3,})+\s*$", "", text.rstrip()) + "\n"
 
 

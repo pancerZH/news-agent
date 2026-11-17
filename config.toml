@@ -8,6 +8,7 @@ reports = "reports"
 feeds = "feeds.toml"
 seeds = "memory_seeds.toml"
 prompt = "prompts/daily_brief.md"
+review_prompt = "prompts/memory_review.md"
 
 [collect]
 window_hours = 72          # 聚类与 Packet 的时间窗
@@ -97,6 +98,10 @@ keywords = [
 workspace = "~/mindslice"
 mindslice = "mindslice"          # CLI；uv run 时来自本项目 venv
 stage_scheduled_writes = true    # 定时运行的记忆写入一律进 staging/ 待审
+
+# 定时运行（staging 模式）结束后，另起一个独立会话审阅暂存的 invest/* 变更：Agent 只写决定，由程序执行 apply/discard。
+[review]
+enabled = true
 
 # 日报邮件投递：run 结束后发送（去掉「③ 记忆库变更清单」）；smtp 文件不存在时自动跳过。
 [mail]
