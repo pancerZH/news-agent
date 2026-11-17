@@ -1,0 +1,159 @@
+# 信源清单。tier: 1 产业深度 / 2 AI 一手 / 3 社区检验 / 4 宏观。
+# fulltext = true: 摘要过短时用 trafilatura 补抓正文。
+# Hacker News 与硬数据面板（国债曲线 + yfinance）是内置模块，参数见 config.toml 的 [hn] / [market]。
+
+# ---- Tier 1: 半导体、AI 基础设施与科技商业战略 ----
+[[feeds]]
+id = "semianalysis"
+name = "SemiAnalysis"
+tier = 1
+url = "https://www.semianalysis.com/feed"
+fulltext = true
+
+[[feeds]]
+id = "stratechery"
+name = "Stratechery"
+tier = 1
+url = "https://stratechery.com/feed/"
+
+[[feeds]]
+id = "fabricated_knowledge"
+name = "Fabricated Knowledge"
+tier = 1
+url = "https://www.fabricatedknowledge.com/feed"
+
+[[feeds]]
+id = "chipstrat"
+name = "ChipStrat"
+tier = 1
+url = "https://www.chipstrat.com/feed"
+
+[[feeds]]
+id = "nextplatform"
+name = "The Next Platform"
+tier = 1
+url = "https://www.nextplatform.com/feed/"
+fulltext = true
+
+# ---- Tier 2: AI 核心实验室与一线工程风向 ----
+[[feeds]]
+id = "openai_news"
+name = "OpenAI News"
+tier = 2
+url = "https://openai.com/news/rss.xml"
+fulltext = true
+
+[[feeds]]
+id = "anthropic_news"
+name = "Anthropic News"
+tier = 2
+url = "https://raw.githubusercontent.com/Olshansk/rss-feeds/main/feeds/feed_anthropic_news.xml"
+fulltext = true
+
+[[feeds]]
+id = "deepmind"
+name = "Google DeepMind Blog"
+tier = 2
+url = "https://deepmind.google/blog/rss.xml"
+fulltext = true
+
+[[feeds]]
+id = "google_ai"
+name = "Google AI Blog"
+tier = 2
+url = "https://blog.google/technology/ai/rss/"
+
+[[feeds]]
+id = "nvidia_blog"
+name = "NVIDIA Official Blog"
+tier = 2
+url = "https://blogs.nvidia.com/feed/"
+
+[[feeds]]
+id = "huggingface"
+name = "Hugging Face Blog"
+tier = 2
+url = "https://huggingface.co/blog/feed.xml"
+fulltext = true
+
+[[feeds]]
+id = "aws_ml"
+name = "AWS Machine Learning Blog"
+tier = 2
+url = "https://aws.amazon.com/blogs/machine-learning/feed/"
+
+[[feeds]]
+id = "cloudflare"
+name = "Cloudflare Blog"
+tier = 2
+url = "https://blog.cloudflare.com/rss/"
+
+[[feeds]]
+id = "simon_willison"
+name = "Simon Willison's Weblog"
+tier = 2
+url = "https://simonwillison.net/atom/everything/"
+
+[[feeds]]
+id = "latent_space"
+name = "Latent Space"
+tier = 2
+url = "https://www.latent.space/feed"
+
+[[feeds]]
+id = "import_ai"
+name = "Import AI"
+tier = 2
+url = "https://importai.substack.com/feed"
+
+[[feeds]]
+id = "dwarkesh"
+name = "Dwarkesh Podcast"
+tier = 2
+url = "https://www.dwarkeshpatel.com/feed"
+
+# ---- Tier 4: 宏观经济、央行政策 ----
+[[feeds]]
+id = "fed_monetary"
+name = "Federal Reserve Monetary Policy"
+tier = 4
+url = "https://www.federalreserve.gov/feeds/press_monetary.xml"
+fulltext = true
+
+[[feeds]]
+id = "fed_speeches"
+name = "Federal Reserve Speeches"
+tier = 4
+url = "https://www.federalreserve.gov/feeds/speeches.xml"
+fulltext = true
+
+[[feeds]]
+id = "bea_releases"
+name = "U.S. BEA Releases"
+tier = 4
+url = "https://apps.bea.gov/rss/rss.xml"
+fulltext = true
+
+[[feeds]]
+id = "ecb_press"
+name = "European Central Bank Press"
+tier = 4
+url = "https://www.ecb.europa.eu/rss/press.html"
+
+[[feeds]]
+id = "apricitas"
+name = "Apricitas Economics"
+tier = 4
+url = "https://www.apricitas.io/feed"
+
+[[feeds]]
+id = "calculated_risk"
+name = "Calculated Risk"
+tier = 4
+url = "https://www.calculatedriskblog.com/feeds/posts/default"
+
+[[feeds]]
+id = "wolf_street"
+name = "Wolf Street"
+tier = 4
+url = "https://wolfstreet.com/feed/"

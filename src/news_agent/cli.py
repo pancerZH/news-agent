@@ -1,0 +1,212 @@
+"""news-agent CLI: init-memory / prep / run / search / show / verify / runs."""
+
+import argparse
+import json
+import sys
+import tomllib
+from concurrent.futures import ThreadPoolExecutor
+from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
+
+from . import collect, db, embed_cluster, market, runner
+
+DEFAULT_CONFIG = Path(__file__).resolve().parents[2] / "config.toml"
+
+
+def log(msg: str) -> None:
+    print(msg, file=sys.stderr, flush=True)
+
+
+def load_config(path: Path) -> tuple[dict, Path]:
+    root = path.resolve().parent
+    cfg = tomllib.loads(path.read_text(encoding="utf-8"))
+    cfg["feeds"] = tomllib.loads((root / cfg["paths"]["feeds"]).read_text(encoding="utf-8"))["feeds"]
+    return cfg, root
+
+
+def iso_hours_ago(hours: int) -> str:
+    return (datetime.now(timezone.utc) - timedelta(hours=hours)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+# ---------------------------------------------------------------- prep
+
+
+def prep(cfg: dict, root: Path, day: str) -> Path:
+    conn = db.connect(root / cfg["paths"]["db"])
+    since = iso_hours_ago(cfg["collect"]["window_hours"])
+
+    log(f"collect: {len(cfg['feeds'])} feeds" + (" + Hacker News" if cfg["hn"]["enabled"] else ""))
+    items, errors = collect.collect_all(cfg["feeds"], cfg)
+    last_id = conn.execute("SELECT COALESCE(MAX(id), 0) FROM items").fetchone()[0]
+    log(f"collect: {len(items)} entries, {db.upsert_items(conn, items)} new, failed: {sorted(errors) or 'none'}")
+
+    c = cfg["collect"]
+    wanted = {f["id"] for f in cfg["feeds"] if f.get("fulltext")}
+    short = [r for r in conn.execute("SELECT id, url, summary, source FROM items WHERE id > ? AND published >= ?",
+                                     (last_id, since)) if r["source"] in wanted and len(r["summary"]) < c["fulltext_min_chars"]]
+    if short:
+        with ThreadPoolExecutor(c["workers"]) as pool:
+            texts = pool.map(lambda r: collect.fulltext(r["url"], c["fulltext_max_chars"], c["timeout_seconds"]), short)
+            with conn:
+                for r, text in zip(short, texts):
+                    if len(text) > len(r["summary"]):
+                        conn.execute("UPDATE items SET summary = ? WHERE id = ?", (text, r["id"]))
+        log(f"fulltext: tried {len(short)} short items")
+
+    snap = None
+    if cfg["market"]["enabled"]:
+        snap = market.snapshot(cfg["market"]["indices"], cfg["watchlist"]["tickers"], c["timeout_seconds"])
+        db.save_snapshot(conn, day, snap)
+        log("market: " + ", ".join(k for k in ("treasury", "indices", "watchlist") if snap.get(k)))
+
+    n = embed_cluster.embed_missing(conn, db.window_items(conn, since), cfg["embedding"])
+    log(f"embed: {n} items encoded with {cfg['embedding']['model']}")
+    clusters = embed_cluster.build_clusters(db.window_items(conn, since), cfg)
+    for cl, cid in zip(clusters, db.save_clusters(conn, day, clusters)):
+        cl["id"] = cid
+    packet = root / cfg["paths"]["packets"] / f"{day}.md"
+    packet.parent.mkdir(parents=True, exist_ok=True)
+    packet.write_text(embed_cluster.render_packet(day, since, clusters, market.render(snap), errors,
+                                                  cfg["cluster"]["top_k"], cfg["cluster"]["macro_k"]), encoding="utf-8")
+    log(f"cluster: {len(clusters)} clusters -> {packet}")
+    return packet
+
+
+# ---------------------------------------------------------------- memory seeding
+
+
+def init_memory(cfg: dict, root: Path) -> list[str]:
+    """Create the seed invest/* cards that do not exist yet (in any mount). Returns the ids created."""
+    mem = cfg["memory"]
+    seeds = tomllib.loads((root / cfg["paths"]["seeds"]).read_text(encoding="utf-8"))["cards"]
+    tickers, entities = cfg["watchlist"]["tickers"], cfg["entities"]
+    seed_links = ", ".join(f"[[{s['id']}]]" for s in seeds)
+    cards = [{"id": "invest/watchlist", "title": "投资关注池 (Watchlist)",
+              "summary": "当前关注标的: " + ", ".join(tickers) + "；核心主线与宏观卡见正文链接。",
+              "aliases": ["关注池", "标的池", "关注标的"],  # no "watchlist": it would make invest/watchlist ambiguous with @invest
+              "content": ["- **关注标的**: " + ", ".join(f"{t} ({entities[t][0]})" for t in tickers),
+                          f"- **核心主线与宏观卡**: {seed_links}",
+                          "- **仓位观察重点**: 待在交互会话中补充。"]}]
+    cards += seeds
+    for t in tickers:
+        name = entities[t][0]
+        cards.append({"id": f"invest/entities/{t.lower()}", "title": f"{name} ({t})",
+                      "summary": f"{name}（{t}）实体卡：在 AI 算力与云产业链中的角色、关键产品与验证记录。",
+                      "aliases": list(dict.fromkeys([t, *entities[t]])),
+                      "content": [f"- **Ticker**: {t}；别名与核心产品代号: {', '.join(entities[t])}",
+                                  "- **产业链角色与卡脖子环节**: 待在交互会话中补充。",
+                                  "- **所属关注池**: [[invest/watchlist]]"]})
+    created = []
+    for card in cards:
+        if runner.mindslice(mem, "read", f"./{card['id']}").returncode == 0:
+            continue
+        kind = card["id"].split("/")[1] if card["id"].count("/") > 1 else "watchlist"
+        args = ["write", card["id"], "--op", "create", "--title", card["title"], "--summary", card["summary"],
+                "--content", "\n".join(card["content"]), "--load", "as-needed", "--tag", "invest", "--tag", kind,
+                "--reason", "news-agent init-memory: seed card from config.toml / memory_seeds.toml defaults"]
+        for a in card.get("aliases", []):
+            args += ["--alias", a]
+        res = runner.mindslice(mem, *args)
+        if res.returncode != 0:
+            raise SystemExit(f"mindslice write {card['id']} failed: {res.stderr or res.stdout}")
+        created.append(card["id"])
+    return created
+
+
+# ---------------------------------------------------------------- search / show / runs
+
+
+def load_cluster(conn, cluster_id: int) -> dict | None:
+    row = conn.execute("SELECT * FROM clusters WHERE id = ?", (cluster_id,)).fetchone()
+    if row is None:
+        return None
+    return {"id": row["id"], "title": row["title"], "score": row["score"], "entities": json.loads(row["entities"]),
+            "rows": db.cluster_items(conn, cluster_id)}
+
+
+def search(conn, terms: list[str], days: int, limit: int) -> list:
+    where = " AND ".join(["(title LIKE ? OR summary LIKE ?)"] * len(terms))
+    params = [p for t in terms for p in (f"%{t}%", f"%{t}%")]
+    return conn.execute(
+        f"SELECT i.*, (SELECT MAX(ci.cluster_id) FROM cluster_items ci WHERE ci.item_id = i.id) AS cluster_id"
+        f" FROM items i WHERE published >= ? AND {where} ORDER BY published DESC LIMIT ?",
+        [iso_hours_ago(days * 24), *params, limit]).fetchall()
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(prog="news-agent", description=__doc__)
+    ap.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    sub.add_parser("init-memory", help="seed invest/* cards in the MindSlice workspace (idempotent)")
+    p = sub.add_parser("prep", help="collect, embed, cluster and write today's packet")
+    p.add_argument("--day", default=date.today().isoformat())
+    p = sub.add_parser("run", help="prep (if needed), run the daily brief in a harness, then verify")
+    p.add_argument("--harness")
+    p.add_argument("--day", default=date.today().isoformat())
+    p.add_argument("--prep", action="store_true", help="re-run prep even if today's packet exists")
+    p.add_argument("--no-stage", action="store_true", help="let the harness write memory directly (no staging)")
+    p = sub.add_parser("search", help="keyword search over collected items")
+    p.add_argument("terms", nargs="+")
+    p.add_argument("--days", type=int, default=30)
+    p.add_argument("--limit", type=int, default=30)
+    p = sub.add_parser("show", help="print a cluster in full")
+    p.add_argument("cluster", help="cluster id, e.g. C123 or 123")
+    p = sub.add_parser("verify", help="check the invest/* memory guardrails")
+    p.add_argument("--since", help="also check history events since this ISO time")
+    p.add_argument("--staged-only", action="store_true", help="with --since: direct (unstaged) writes are problems")
+    sub.add_parser("runs", help="list recent harness runs and how to resume them")
+    args = ap.parse_args(argv)
+    cfg, root = load_config(args.config)
+
+    if args.cmd == "init-memory":
+        created = init_memory(cfg, root)
+        print(f"created {len(created)} cards" + "".join(f"\n  {c}" for c in created))
+        return 0
+    if args.cmd == "prep":
+        print(prep(cfg, root, args.day))
+        return 0
+    if args.cmd == "run":
+        harness = args.harness or cfg["harness"]["default"]
+        packet = root / cfg["paths"]["packets"] / f"{args.day}.md"
+        if args.prep or not packet.exists():
+            prep(cfg, root, args.day)
+        stage = cfg["memory"]["stage_scheduled_writes"] and not args.no_stage
+        report = root / cfg["paths"]["reports"] / f"{args.day}.md"
+        log(f"run: {harness} (stage={stage}) ...")
+        meta = runner.run_harness(cfg, root, args.day, harness, stage, packet, report)
+        conn = db.connect(root / cfg["paths"]["db"])
+        with conn:
+            conn.execute("INSERT INTO runs VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                         (meta["run_id"], meta["day"], harness, meta["started"], meta["finished"], meta["exit_code"],
+                          meta["session_id"], meta["resume"], meta["status"], meta["run_dir"], meta["report"]))
+        print(f"status: {meta['status']}\nreport: {meta['report']}\nlogs:   {meta['run_dir']}\nresume: {meta['resume']}")
+        for prob in meta["problems"]:
+            print(f"  ! {prob}")
+        return 0 if meta["status"] == "ok" else 1
+
+    conn = db.connect(root / cfg["paths"]["db"])
+    if args.cmd == "search":
+        for r in search(conn, args.terms, args.days, args.limit):
+            cl = f"C{r['cluster_id']}" if r["cluster_id"] else "-"
+            print(f"{r['published'][:10]} {cl:>6} [{r['source']}] {r['title']}\n{'':18}{r['url']}")
+        return 0
+    if args.cmd == "show":
+        c = load_cluster(conn, int(args.cluster.lstrip("Cc")))
+        if c is None:
+            print(f"no cluster {args.cluster}", file=sys.stderr)
+            return 1
+        print("\n".join(embed_cluster.render_cluster(c, max_items=None, summary_chars=3000)))
+        return 0
+    if args.cmd == "verify":
+        problems = runner.verify(cfg["memory"], since=args.since, staged_only=args.staged_only)
+        print("\n".join(f"! {p}" for p in problems) or "ok: invest/* memory guardrails pass")
+        return 1 if problems else 0
+    if args.cmd == "runs":
+        for r in conn.execute("SELECT * FROM runs ORDER BY started DESC LIMIT 20"):
+            print(f"{r['id']}  {r['status']}\n  report: {r['report']}\n  logs:   {r['run_dir']}\n  resume: {r['resume']}")
+        return 0
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
