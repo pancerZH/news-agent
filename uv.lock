@@ -912,11 +912,11 @@ wheels = [
 
 [[package]]
 name = "mindslice"
-version = "0.2.0"
+version = "0.2.3"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/58/7b/fcc6bea1a99050e352d5d60b5fbdd5970477548acbe03338ab27c7acc447/mindslice-0.2.0.tar.gz", hash = "sha256:640a3a96d09a01466688c6d48892d3c6b5eb7d00afac4699bfe027f00b5e0897", size = 222314, upload-time = "2026-11-16T13:33:32.944Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/64/af/372f5babd75d67567dd99b42f317af188bacb7b7589849e1a25834861b33/mindslice-0.2.3.tar.gz", hash = "sha256:85e0a1e2e8e02d5d4dc8b98b0554e68d6762a793d506a29fbe161d0c42528dfa", size = 233636, upload-time = "2026-11-17T23:39:44.304Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/c2/65/f3d7a06ca99a2f1cf4c1fa765803d750dd4192138e33fdcd34e79dffd072/mindslice-0.2.0-py3-none-any.whl", hash = "sha256:c7a4db1e93eb6c87ddf157b42889232664c184d41095beaad261ce4552e24d35", size = 149413, upload-time = "2026-11-16T13:33:29.099Z" },
+    { url = "https://files.pythonhosted.org/packages/12/0c/c8a7178f2d40e5a6e2da2838fd45e042f0b5383e524016a5174e9f3ded0d/mindslice-0.2.3-py3-none-any.whl", hash = "sha256:8f8d62b187f7971008552b39f100933a9360df21cab636b452371fdaf9b2405f", size = 155716, upload-time = "2026-11-17T23:39:42.7Z" },
 ]
 
 [[package]]
