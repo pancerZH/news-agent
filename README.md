@@ -34,31 +34,16 @@ Generated locally at run time (ignored by `.gitignore`): the latest report `repo
 
 Two editions a day: `run` picks `--edition am|pm` from the current time (am before noon), and packets, event clusters and reports are stored per edition (e.g. `reports/2026-11-16-am.md`). The evening prompt includes the previous report and covers only new information and developments. The email subject is `科技/AI + 宏观早报 / 晚报 · <date>` (morning / evening edition).
 
-`~/.config/systemd/user/news-agent.service`:
+The units are in `systemd/`. Install them from the checkout (`@REPO@` becomes its path):
 
-```ini
-[Service]
-Type=oneshot
-WorkingDirectory=/path/to/news-agent
-Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
-ExecStart=%h/.local/bin/uv run news-agent run
-TimeoutStartSec=90min
-Nice=5
+```sh
+mkdir -p ~/.config/systemd/user
+sed "s#@REPO@#$PWD#" systemd/news-agent.service > ~/.config/systemd/user/news-agent.service
+cp systemd/news-agent.timer ~/.config/systemd/user/
+systemctl --user daemon-reload && systemctl --user enable --now news-agent.timer
 ```
 
-`~/.config/systemd/user/news-agent.timer`:
-
-```ini
-[Timer]
-OnCalendar=*-*-* 07:30:00
-OnCalendar=*-*-* 18:00:00
-Persistent=true
-
-[Install]
-WantedBy=timers.target
-```
-
-- Enable: `systemctl --user daemon-reload && systemctl --user enable --now news-agent.timer`.
+- To change the times, edit `OnCalendar` in `systemd/news-agent.timer` and install it again.
 - Next trigger: `systemctl --user list-timers news-agent.timer`; logs: `journalctl --user -u news-agent`.
 - Run once now: `systemctl --user start news-agent.service`; disable: `systemctl --user disable --now news-agent.timer`.
 - Runs missed while the machine was off or asleep are made up after boot (`Persistent=true`); to run while you are not logged in, run `loginctl enable-linger`.

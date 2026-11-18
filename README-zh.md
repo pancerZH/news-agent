@@ -34,31 +34,16 @@
 
 每天两期：`run` 按当前时间自动取 `--edition am|pm`（中午前为 am），数据包、事件簇、报告都按期号存放（如 `reports/2026-11-16-am.md`）。晚报的 Prompt 会带上上一期报告，只写新增信息与进展。邮件标题为「科技/AI + 宏观早报 / 晚报 · 日期」。
 
-`~/.config/systemd/user/news-agent.service`：
+unit 在 `systemd/` 里。在仓库目录下安装（`@REPO@` 换成仓库路径）：
 
-```ini
-[Service]
-Type=oneshot
-WorkingDirectory=/path/to/news-agent
-Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
-ExecStart=%h/.local/bin/uv run news-agent run
-TimeoutStartSec=90min
-Nice=5
+```sh
+mkdir -p ~/.config/systemd/user
+sed "s#@REPO@#$PWD#" systemd/news-agent.service > ~/.config/systemd/user/news-agent.service
+cp systemd/news-agent.timer ~/.config/systemd/user/
+systemctl --user daemon-reload && systemctl --user enable --now news-agent.timer
 ```
 
-`~/.config/systemd/user/news-agent.timer`：
-
-```ini
-[Timer]
-OnCalendar=*-*-* 07:30:00
-OnCalendar=*-*-* 18:00:00
-Persistent=true
-
-[Install]
-WantedBy=timers.target
-```
-
-- 启用：`systemctl --user daemon-reload && systemctl --user enable --now news-agent.timer`。
+- 要改运行时间，改 `systemd/news-agent.timer` 里的 `OnCalendar`，再安装一次。
 - 查看下次触发：`systemctl --user list-timers news-agent.timer`；日志：`journalctl --user -u news-agent`。
 - 手动立即跑一次：`systemctl --user start news-agent.service`；停用：`systemctl --user disable --now news-agent.timer`。
 - 机器关机或休眠错过的时间点，会在开机后补跑（`Persistent=true`）；如需在未登录时也运行，执行 `loginctl enable-linger`。

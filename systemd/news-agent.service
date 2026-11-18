@@ -1,0 +1,10 @@
+[Unit]
+Description=news-agent: tech/AI + macro brief (prep -> harness -> verify -> mail)
+
+[Service]
+Type=oneshot
+WorkingDirectory=@REPO@
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=%h/.local/bin/uv run news-agent run
+TimeoutStartSec=90min
+Nice=5
