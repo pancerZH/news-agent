@@ -46,8 +46,38 @@ def test_reviewer_that_changes_memory_gets_nothing_executed(project, workspace, 
     args = setup(project, workspace, monkeypatch)
     monkeypatch.setenv("FAKE_REVIEW_MODE", "tamper")
     assert cli.main([*args, "run", "--edition", "am"]) == 1
-    assert "审阅期间记忆库被改动，未执行任何决定" in capsys.readouterr().out
+    assert "审阅期间 invest/ 下有改动，未执行任何决定: applied @overlay/invest/theses/sneaky" in capsys.readouterr().out
     assert "@overlay/invest/theses/ai-compute-capex" in pending(workspace)
+
+
+def test_other_sessions_writing_elsewhere_during_review_do_not_block_it(project, workspace, monkeypatch, capsys):
+    args = setup(project, workspace, monkeypatch)
+    monkeypatch.setenv("FAKE_REVIEW_MODE", "bystander")
+    assert cli.main([*args, "run", "--edition", "am"]) == 0
+    out = capsys.readouterr().out
+    assert "review: ok · applied 1, discarded 0, pending 0, failed 0" in out
+    assert "~ 其他位置有写入（多半是其他会话）: applied @overlay/projects/elsewhere" in out
+    assert pending(workspace) == ["@overlay/prefs/p"]
+
+
+def test_blocked_review_notifies_the_owner_only(project, workspace, monkeypatch, capsys):
+    from test_mail import FakeSMTP
+    import smtplib
+    FakeSMTP.sent = []
+    monkeypatch.setattr(smtplib, "SMTP_SSL", FakeSMTP)
+    args = setup(project, workspace, monkeypatch)
+    (project / "smtp.toml").write_text('host = "h"\nusername = "me@x"\npassword = "p"\nto = ["me@x", "reader@x"]\n')
+    monkeypatch.setenv("FAKE_REVIEW_MODE", "tamper")
+    assert cli.main([*args, "run", "--edition", "am"]) == 1
+    report, note = FakeSMTP.sent
+    assert report["To"] == "me@x, reader@x" and note["To"] == "me@x"
+    assert note["Subject"].startswith("news-agent 记忆审阅未完成")
+    body = note.get_content()
+    assert "pending 1" in body and "invest/theses/sneaky" in body and "uv run news-agent review" in body
+
+    FakeSMTP.sent = []
+    monkeypatch.setenv("FAKE_REVIEW_MODE", "")
+    assert cli.main([*args, "review"]) == 0 and FakeSMTP.sent == []  # a review that completes sends nothing
 
 
 def test_review_command_ignores_foreign_decisions_and_keeps_undecided_pending(project, workspace, monkeypatch, capsys):

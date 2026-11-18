@@ -114,32 +114,36 @@ def history_since(ws: Path, since: str) -> list[dict]:
     return [e for e in events if datetime.fromisoformat(e["timestamp"]) >= start]
 
 
+def is_invest(event: dict) -> bool:
+    """news-agent owns the cards under invest/; the rest of the workspace belongs to other writers."""
+    return "address" in event and event["address"].split("/", 1)[1].startswith("invest/")
+
+
+def others_since(ws: Path, since: str) -> list[str]:
+    """Warnings for writes outside invest/ since `since`. Other sessions share the workspace, and history does not
+    say who wrote what, so these are reported but never fail a run."""
+    return [f"其他位置有写入（多半是其他会话）: {e['event']} {e['address']}"
+            for e in history_since(ws, since) if "address" in e and not is_invest(e)]
+
+
 def verify(mem: dict, since: str | None = None, staged_only: bool = False) -> list[str]:
-    """Problems with the invest/* memory: always-loaded or untagged cards, invest cards outside the prefix,
-    writes outside invest/ (or unstaged ones in a scheduled run) since `since`, validate errors, broken links."""
+    """Problems with the invest/* memory: always-loaded or untagged cards, unstaged invest/ writes in a scheduled
+    run since `since`, validate errors, broken links. Only invest/ is checked: tags are search facets that any
+    writer may use, and writes elsewhere are other sessions' (see others_since)."""
     ws = Path(mem["workspace"]).expanduser()
     problems = []
     roots = [ws / "overlay", ws / "staging"]
     baked = invest_slice_dir(ws)
     for root in roots + ([baked] if baked else []):
-        for md in sorted(root.rglob("*.md")):
-            rel = md.relative_to(root).as_posix()
+        for md in sorted((root / "invest").rglob("*.md")):
             meta = card_meta(md)
-            if rel.startswith("invest/"):
-                if meta.get("load") == "always":
-                    problems.append(f"load=\"always\" 禁止用于 invest 卡片: {md}")
-                if "invest" not in meta.get("tags", []):
-                    problems.append(f"invest 卡片缺少 \"invest\" 标签: {md}")
-            elif "invest" in meta.get("tags", []):
-                problems.append(f"带 invest 标签的卡片越界（不在 invest/ 下）: {md}")
+            if meta.get("load") == "always":
+                problems.append(f"load=\"always\" 禁止用于 invest 卡片: {md}")
+            if "invest" not in meta.get("tags", []):
+                problems.append(f"invest 卡片缺少 \"invest\" 标签: {md}")
 
     for e in history_since(ws, since) if since else []:
-        if e.get("origin") != "write" or "address" not in e:
-            continue
-        path = e["address"].split("/", 1)[1]
-        if not path.startswith("invest/"):
-            problems.append(f"运行期间越界写入: {e['address']} ({e['op']})（若同时有其它会话在写记忆库，可能误报）")
-        elif staged_only and e["event"] == "applied":
+        if e.get("origin") == "write" and is_invest(e) and staged_only and e["event"] == "applied":
             problems.append(f"定时运行中未经 staging 的直写: {e['address']} ({e['op']})")
 
     res = mindslice(mem, "validate")
@@ -223,7 +227,7 @@ def run_harness(cfg: dict, root: Path, issue: str, title: str, harness: str, sta
         "run_id": run_id, "day": issue, "harness": harness, "stage": stage, "started": started, "finished": now_iso(),
         "exit_code": res["exit_code"], "status": status, "session_id": res["session_id"], "resume": res["resume"],
         "run_dir": str(run_dir), "report": str(report) if report.exists() else None, "problems": problems,
-        "cmd": res["cmd"]})
+        "warnings": others_since(Path(mem["workspace"]).expanduser(), started), "cmd": res["cmd"]})
 
 
 # ---------------------------------------------------------------- memory review
@@ -252,7 +256,8 @@ def run_review(cfg: dict, root: Path, issue: str, harness: str, packet: Path, re
     """An independent session judges each staged invest/* change; this code then applies or discards it.
 
     The reviewer only writes a decisions file. Its decisions are executed only for pending invest/* addresses and only
-    if memory did not change while it ran; changes without a decision stay pending."""
+    if nothing under invest/ changed while it ran (writes elsewhere are other sessions' and only warned about);
+    changes without a decision stay pending."""
     mem = cfg["memory"]
     pending = pending_invest(mem)
     if not pending:
@@ -269,8 +274,9 @@ def run_review(cfg: dict, root: Path, issue: str, harness: str, packet: Path, re
     started = now_iso()
     res = launch(cfg, root, run_dir, harness, prompt)
     ws = Path(mem["workspace"]).expanduser()
-    problems = [f"审阅期间记忆库被改动，未执行任何决定: {e.get('event')} {e.get('address')}"
-                for e in history_since(ws, started) if e.get("address")]
+    problems = [f"审阅期间 invest/ 下有改动，未执行任何决定: {e['event']} {e['address']}"
+                for e in history_since(ws, started) if is_invest(e)]
+    warnings = others_since(ws, started)
     tampered = bool(problems)
     decisions = {d.get("address"): d for d in load_decisions(decisions_file, res["output"])}
     outcome = []
@@ -295,5 +301,5 @@ def run_review(cfg: dict, root: Path, issue: str, harness: str, packet: Path, re
     return save_meta(run_dir, {
         "run_id": run_id, "day": issue, "harness": harness, "stage": False, "started": started, "finished": now_iso(),
         "exit_code": res["exit_code"], "status": status, "session_id": res["session_id"], "resume": res["resume"],
-        "run_dir": str(run_dir), "report": str(run_dir / "review.md"), "problems": problems, "decisions": outcome,
-        "cmd": res["cmd"]})
+        "run_dir": str(run_dir), "report": str(run_dir / "review.md"), "problems": problems, "warnings": warnings,
+        "decisions": outcome, "cmd": res["cmd"]})

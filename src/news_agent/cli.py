@@ -148,6 +148,10 @@ def init_memory(cfg: dict, root: Path) -> list[str]:
 
 def deliver(cfg: dict, title: str, report: Path, status: str = "ok") -> bool:
     """Email the report if mail is enabled and configured. Returns False only when sending failed."""
+    return _mail(cfg, lambda smtp: mail.send(report, title, smtp, status))
+
+
+def _mail(cfg: dict, send) -> bool:
     smtp = Path(cfg["mail"]["smtp"]).expanduser()
     if not cfg["mail"]["enabled"]:
         return True
@@ -155,11 +159,18 @@ def deliver(cfg: dict, title: str, report: Path, status: str = "ok") -> bool:
         log(f"mail: skipped, {smtp} not found")
         return True
     try:
-        log(f"mail: sent to {', '.join(mail.send(report, title, smtp, status))}")
+        log(f"mail: sent to {', '.join(send(smtp))}")
         return True
     except Exception as e:
         log(f"mail: failed: {type(e).__name__}: {e}")
         return False
+
+
+def print_problems(meta: dict) -> None:
+    for prob in meta["problems"]:
+        print(f"  ! {prob}")
+    for warning in meta.get("warnings", []):
+        print(f"  ~ {warning}")
 
 
 def record_run(cfg: dict, root: Path, meta: dict) -> None:
@@ -178,11 +189,18 @@ def review(cfg: dict, root: Path, issue: str, harness: str, packet: Path, report
         return True
     record_run(cfg, root, meta)
     counts = {k: sum(d["decision"] == k for d in meta["decisions"]) for k in ("apply", "discard", "pending", "failed")}
-    print(f"review: {meta['status']} · applied {counts['apply']}, discarded {counts['discard']}, "
-          f"pending {counts['pending']}, failed {counts['failed']}\n  log: {meta['report']}")
-    for prob in meta["problems"]:
-        print(f"  ! {prob}")
-    return meta["status"] == "ok"
+    summary = (f"applied {counts['apply']}, discarded {counts['discard']}, "
+               f"pending {counts['pending']}, failed {counts['failed']}")
+    print(f"review: {meta['status']} · {summary}\n  log: {meta['report']}")
+    print_problems(meta)
+    if meta["status"] == "ok":
+        return True
+    # The report went out before the review, so without this note a blocked review goes unnoticed.
+    body = "\n".join([f"{issue} 的记忆自动审阅没有完成（{meta['status']}）：{summary}。", "",
+                      *(f"- {p}" for p in meta["problems"]), "",
+                      f"记录：{meta['report']}", "查看待审：mindslice diff；重新审阅：uv run news-agent review"])
+    _mail(cfg, lambda smtp: mail.notify(f"news-agent 记忆审阅未完成 · {issue}", body, smtp))
+    return False
 
 
 # ---------------------------------------------------------------- search / show / runs
@@ -266,8 +284,7 @@ def main(argv: list[str] | None = None) -> int:
         meta = runner.run_harness(cfg, root, issue, title, harness, stage, packet, report, previous)
         record_run(cfg, root, meta)
         print(f"status: {meta['status']}\nreport: {meta['report']}\nlogs:   {meta['run_dir']}\nresume: {meta['resume']}")
-        for prob in meta["problems"]:
-            print(f"  ! {prob}")
+        print_problems(meta)
         ok = deliver(cfg, title, report, meta["status"]) if meta["report"] else True
         if stage and cfg["review"]["enabled"]:
             ok = review(cfg, root, issue, harness, packet, report) and ok

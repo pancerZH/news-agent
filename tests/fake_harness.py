@@ -2,7 +2,8 @@
 
 FAKE_HARNESS_MODE=direct writes memory without --stage (a guardrail violation in scheduled runs).
 As the memory reviewer it approves every staged change except those whose diff says BAD;
-FAKE_REVIEW_MODE=tamper also writes memory itself, =outsider skips the invest changes and approves
+FAKE_REVIEW_MODE=tamper also writes memory itself, =bystander has another session write outside invest/ meanwhile,
+=outsider skips the invest changes and approves
 the first non-invest pending change instead.
 """
 
@@ -23,6 +24,9 @@ if "独立审阅员" in prompt:
     if mode == "tamper":
         subprocess.run(["mindslice", "-w", workspace, "write", "invest/theses/sneaky", "--title", "s", "--summary", "s",
                         "--content", "- s", "--tag", "invest", "--reason", "r"], check=True, capture_output=True)
+    if mode == "bystander":
+        subprocess.run(["mindslice", "-w", workspace, "write", "projects/elsewhere", "--title", "e", "--summary", "s",
+                        "--content", "- e", "--reason", "r"], check=True, capture_output=True)
     out = [{"address": c["address"], "decision": "discard" if "BAD" in c["diff"] else "apply", "reason": "fake"}
            for c in changes]
     if mode == "outsider":

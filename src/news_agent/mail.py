@@ -69,11 +69,28 @@ def send(report: Path, title: str, smtp_file: str | Path, status: str = "ok") ->
     """Send the report with the settings in smtp_file (host, port, username, password, to[, from])."""
     conf = tomllib.loads(Path(smtp_file).expanduser().read_text(encoding="utf-8"))
     to = conf["to"] if isinstance(conf["to"], list) else [conf["to"]]
-    msg = build_message(report, title, conf.get("from", conf["username"]), to, status)
+    _deliver(conf, build_message(report, title, conf.get("from", conf["username"]), to, status))
+    return to
+
+
+def notify(subject: str, body: str, smtp_file: str | Path) -> list[str]:
+    """A plain-text note for the owner only: `notify` in smtp_file, else the sending account (never `to`, which may
+    include other readers of the report)."""
+    conf = tomllib.loads(Path(smtp_file).expanduser().read_text(encoding="utf-8"))
+    sender = conf.get("from", conf["username"])
+    to = conf.get("notify", sender)
+    to = to if isinstance(to, list) else [to]
+    msg = EmailMessage()
+    msg["Subject"], msg["From"], msg["To"] = subject, sender, ", ".join(to)
+    msg.set_content(body)
+    _deliver(conf, msg)
+    return to
+
+
+def _deliver(conf: dict, msg: EmailMessage) -> None:
     port = conf.get("port", 465)
     with (smtplib.SMTP_SSL if port == 465 else smtplib.SMTP)(conf["host"], port, timeout=30) as smtp:
         if port != 465:
             smtp.starttls()
         smtp.login(conf["username"], conf["password"])
         smtp.send_message(msg)
-    return to

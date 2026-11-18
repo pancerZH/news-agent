@@ -17,7 +17,7 @@
 | `uv run news-agent search 关键词 [--days 30]` | 历史条目关键词检索 |
 | `uv run news-agent review` | 让独立会话审阅暂存的 `invest/*` 变更，由程序执行 apply/discard（`run` 结束后自动执行） |
 | `uv run news-agent runs` | 最近的运行记录、日志目录与续聊命令 |
-| `uv run news-agent verify` | 记忆护栏校验（无 always、标签/前缀合规、validate 零错误、无断链） |
+| `uv run news-agent verify` | `invest/` 记忆护栏校验（无 always、卡片都带 `invest` 标签、validate 零错误、无断链） |
 | `uv run news-agent init-memory` | 幂等创建 watchlist / 宏观 / 主线 / 实体种子卡 |
 
 访谈文稿：`prep` 会识别带说话人标注的全文（Dwarkesh、Stratechery、ChipStrat、Fabricated Knowledge），以及 `vtt = true` 信源节目页面里链接的 beehiiv 字幕。近 `[transcripts] lookback_days` 天发布、关注池实体与主题词密度够高的文稿，每篇起一个 harness 会话（每次 prep 最多 `max_per_run` 篇），抽取带说话人、类型（事实、预测、观点、主持人前提、转述）和逐字引文的观点，引文必须出现在所引段落里。数据包在「访谈观点」一节列出；没有说话人标注的字幕，除非文中点名，只归到机构或角色，可以用 `voicecheck` 按声纹核实。
@@ -32,7 +32,7 @@
 - 主线卡正文：`核心假设 (Premise)` / `当前状态与置信度 (Conviction)` / `关键验证记录 (Evidence)`（`[YYYY-MM-DD] ...`）/ `预设证伪条件 (Kill Criteria)`。
 - 实体卡 `aliases` 必填中英文名、Ticker、核心产品代号（便于 BM25 词法召回）。
 - 链接：同在 `@overlay` 写 `[[invest/...]]`；引用已烘焙进 `@invest` 的卡片写 `[[@invest/invest/...]]`。
-- 交互会话中经用户确认的变更直接写 `@overlay/invest/*`；定时运行的写入进入 `staging/`，运行结束后由独立审阅会话逐条判断（出处、慢变量、去重、结构、结论克制），审阅 Agent 只写决定，由程序只对 `@overlay/invest/*` 执行 apply/discard；审阅期间记忆库若有改动则不执行任何决定。审阅记录在 `data/runs/*-review-*/review.md`。
+- 交互会话中经用户确认的变更直接写 `@overlay/invest/*`；定时运行的写入进入 `staging/`，运行结束后由独立审阅会话逐条判断（出处、慢变量、去重、结构、结论克制），审阅 Agent 只写决定，由程序只对 `@overlay/invest/*` 执行 apply/discard；审阅期间 `invest/` 下若有改动则不执行任何决定。记忆库与其他会话共用，运行或审阅期间 `invest/` 以外的写入只打印为警告（`~`），不会让运行失败。审阅没有完成（决定被拦下、保留待审或执行失败）时，另发一封简短通知给发信账号本身（或 `smtp.toml` 里的 `notify`），不发给日报的 `to` 列表。审阅记录在 `data/runs/*-review-*/review.md`。
 - 归档：`mindslice bake -w ~/mindslice @invest --prefix invest/`。
 
 ## 定时运行（systemd 用户定时器示例：每天 07:30 早报、18:00 晚报，按系统本地时间）

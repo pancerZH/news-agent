@@ -5,7 +5,7 @@ import tomllib
 import pytest
 
 from news_agent.cli import init_memory, load_config
-from news_agent.runner import now_iso, verify
+from news_agent.runner import now_iso, others_since, verify
 
 
 def ms(ws, *args):
@@ -32,15 +32,15 @@ def test_init_memory_is_idempotent_and_clean(cfg, workspace):
     assert verify(config["memory"]) == []
 
 
-def test_always_load_untagged_and_out_of_prefix_cards_are_flagged(cfg, workspace):
+def test_always_load_and_untagged_invest_cards_are_flagged_but_tags_elsewhere_are_free(cfg, workspace):
     mem = cfg[0]["memory"]
     write(workspace, "invest/theses/loud", "- x", "--tag", "invest", "--load", "always", "--no-stage")
     write(workspace, "invest/theses/untagged")
-    write(workspace, "projects/stray", "- x", "--tag", "invest")
+    write(workspace, "reference/data-source", "- x", "--tag", "invest")  # another session's card: not ours
     problems = "\n".join(verify(mem))
     assert "load=\"always\"" in problems and "loud.md" in problems
     assert "缺少 \"invest\" 标签" in problems and "untagged.md" in problems
-    assert "越界" in problems and "stray.md" in problems
+    assert "data-source" not in problems
 
 
 def test_history_checks_out_of_bounds_and_unstaged_writes(cfg, workspace):
@@ -52,7 +52,9 @@ def test_history_checks_out_of_bounds_and_unstaged_writes(cfg, workspace):
     write(workspace, "projects/elsewhere")
     problems = "\n".join(verify(mem, since=since, staged_only=True))
     assert "未经 staging 的直写: @overlay/invest/theses/direct" in problems
-    assert "越界写入: @overlay/projects/elsewhere" in problems
+    assert "projects/elsewhere" not in problems  # other sessions write outside invest/ all day
+    assert any("@overlay/projects/elsewhere" in w for w in others_since(workspace, since))
+    assert not any("invest/" in w for w in others_since(workspace, since))
     assert "invest/theses/direct" not in "\n".join(verify(mem, since=since, staged_only=False))
 
 
