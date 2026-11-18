@@ -18,7 +18,7 @@ news-agent distills **tech/AI supply-chain + macroeconomic** news into a daily d
 | `uv run news-agent verify` | Memory guardrail checks (no always-loaded cards, tag/prefix compliance, zero validate errors, no broken links) |
 | `uv run news-agent init-memory` | Idempotently create the watchlist / macro / thesis / entity seed cards |
 
-Generated locally at run time (ignored by `.gitignore`): the latest report `reports/latest.md` today's packet `data/packets/<today>.md`, and `data/lookups.jsonl`, one line per `search`/`show`/`read` call (to tell clusters the agent looked at from ones it never saw).
+Generated locally at run time (ignored by `.gitignore`): the latest report `reports/latest.md`, today's packet `data/packets/<today>.md`, and `data/lookups.jsonl`, one line per `search`/`show`/`read` call (to tell clusters the agent looked at from ones it never saw).
 
 ## Memory isolation contract (`~/mindslice`)
 
