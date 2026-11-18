@@ -109,6 +109,8 @@ lookback_days = 14
 min_density = 8.0    # 每万字符的实体提及数；2026-11-18 实测：算力/半导体访谈 10–24，AI 安全、产品访谈与 Latent Space 多在 1–8
 max_per_run = 3      # 每次 prep 最多抽取几篇（每篇 agy 约 2–4 分钟、6–14 万输入 token）
 parallel = 3
+max_attempts = 3     # 抽取会话失败后，之后的 prep 重试，共计最多几次
+vtt_recheck_hours = 48  # 发布不到这么久、节目页还没有字幕的 vtt 条目，每次 prep 再查一遍
 packet_claims = 8    # 数据包里每篇最多列几条（其余用 `news-agent claims #<访谈编号>` 查看）
 
 # `news-agent voicecheck TC###`：无标注字幕里的观点要写到个人名下前，用声纹比对抽取时标出的本人片段。

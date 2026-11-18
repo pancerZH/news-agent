@@ -61,6 +61,7 @@ CREATE TABLE IF NOT EXISTS transcripts (
     body TEXT NOT NULL,                 -- one "[P0001] ..." line per paragraph or caption cue
     audio TEXT,                         -- episode audio URL (vtt only; for `news-agent voicecheck`)
     status TEXT NOT NULL,               -- pending | done | skipped: ... | failed: ... | none
+    attempts INTEGER NOT NULL DEFAULT 0,  -- failed extraction sessions so far
     speakers TEXT NOT NULL DEFAULT '[]',
     run_id TEXT,
     extracted TEXT
@@ -93,6 +94,8 @@ def connect(path: str | Path) -> sqlite3.Connection:
     conn.executescript(SCHEMA)
     if "content" not in {r["name"] for r in conn.execute("PRAGMA table_info(items)")}:  # databases before full text
         conn.execute("ALTER TABLE items ADD COLUMN content TEXT NOT NULL DEFAULT ''")
+    if "attempts" not in {r["name"] for r in conn.execute("PRAGMA table_info(transcripts)")}:  # first version
+        conn.execute("ALTER TABLE transcripts ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0")
     return conn
 
 

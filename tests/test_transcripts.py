@@ -107,3 +107,40 @@ def test_voicecheck_compares_the_claim_cue_with_speaker_samples(project, tmp_pat
     assert voice.check(conn, cfg, root, 1, LoudnessEmbedder()).startswith("TC1: match: A")
     assert voice.check(conn, cfg, root, 2, LoudnessEmbedder()).startswith("TC2: match: B")
     assert conn.execute("SELECT voice FROM claims WHERE id = 2").fetchone()[0].startswith("match: B")
+
+
+def episode_db(project, published_hours_ago: list[int]):
+    cfg, root = cli.load_config(project / "config.toml")
+    cfg["feeds"] = [{"id": "pod", "vtt": True}]
+    conn = cli.db.connect(root / cfg["paths"]["db"])
+    with conn:
+        for n, hours in enumerate(published_hours_ago, 1):
+            conn.execute("INSERT INTO items (id, source, tier, url, canonical_url, title, published, fetched)"
+                         " VALUES (?, 'pod', 2, ?, ?, 't', ?, 'f')", (n, f"u{n}", f"u{n}", cli.iso_hours_ago(hours)))
+    return cfg, root, conn
+
+
+def test_recent_episodes_without_captions_are_looked_at_again(project, monkeypatch):
+    cfg, root, conn = episode_db(project, [10, 24 * 5])  # a fresh episode and a five-day-old one
+    monkeypatch.setattr(transcripts, "find_vtt", lambda url, timeout: (None, None))
+    transcripts.discover(conn, cfg, cli.iso_hours_ago(24 * 14), cli.iso_hours_ago(48))
+    captions = "WEBVTT\n\n1\n00:00:01.000 --> 00:00:03.000\nNVIDIA TSMC NVIDIA TSMC NVIDIA\n"
+    seen = []
+    monkeypatch.setattr(transcripts, "find_vtt", lambda url, timeout: seen.append(url) or (captions, "a.mp3"))
+    assert transcripts.discover(conn, cfg, cli.iso_hours_ago(24 * 14), cli.iso_hours_ago(48)) == 1
+    assert seen == ["u1"]  # the old one stays "none"
+    rows = conn.execute("SELECT item_id, kind, status, audio FROM transcripts ORDER BY item_id").fetchall()
+    assert [tuple(r) for r in rows] == [(1, "vtt", "pending", "a.mp3"), (2, "none", "none", None)]
+
+
+def test_failed_extraction_is_retried_up_to_max_attempts(project, monkeypatch):
+    cfg, root, conn = episode_db(project, [10])
+    with conn:
+        conn.execute("INSERT INTO transcripts (item_id, kind, body, status) VALUES (1, 'labeled', '', 'pending')")
+    monkeypatch.setattr(transcripts, "extract_one", lambda *a: "failed: harness exit code 1 (run-x)")
+    statuses = []
+    for _ in range(cfg["transcripts"]["max_attempts"] + 1):
+        transcripts.extract_pending(conn, cfg, root, "2026-11-18-pm")
+        statuses.append(tuple(conn.execute("SELECT status, attempts FROM transcripts").fetchone()))
+    assert statuses == [("pending", 1), ("pending", 2), ("failed: harness exit code 1 (run-x)", 3),
+                        ("failed: harness exit code 1 (run-x)", 3)]

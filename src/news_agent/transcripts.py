@@ -87,16 +87,18 @@ def find_vtt(url: str, timeout: float) -> tuple[str | None, str | None]:
         return None, None
 
 
-def discover(conn, cfg: dict, since: str) -> int:
+def discover(conn, cfg: dict, since: str, recheck_since: str) -> int:
     """Register the transcripts among items published since `since`: labeled full texts, and VTT files for items of
-    feeds marked `vtt = true`. Transcripts that rarely mention the watchlist entities are recorded as skipped."""
+    feeds marked `vtt = true`. Transcripts that rarely mention the watchlist entities are recorded as skipped.
+    Episodes published since `recheck_since` whose page had no captions yet are looked at again."""
     from .embed_cluster import compile_entities
 
     t, c = cfg["transcripts"], cfg["collect"]
     vtt_feeds = {f["id"] for f in cfg["feeds"] if f.get("vtt")}
     patterns = compile_entities(cfg["entities"])
-    rows = conn.execute("SELECT id, source, url, title, content FROM items WHERE published >= ? AND id NOT IN"
-                        " (SELECT item_id FROM transcripts)", (since,)).fetchall()
+    rows = conn.execute("SELECT id, source, url, title, content FROM items WHERE published >= ? AND (id NOT IN"
+                        " (SELECT item_id FROM transcripts) OR (published >= ? AND id IN"
+                        " (SELECT item_id FROM transcripts WHERE kind = 'none')))", (since, recheck_since)).fetchall()
     found = []
     for r in rows:
         if is_labeled_transcript(r["content"]):
@@ -109,7 +111,8 @@ def discover(conn, cfg: dict, since: str) -> int:
             text = "\n".join(lines)
             dense = entity_density(text, patterns) >= t["min_density"]
             status = "none" if kind == "none" else "pending" if dense else "skipped: few watchlist entity mentions"
-            conn.execute("INSERT INTO transcripts (item_id, kind, body, audio, status) VALUES (?, ?, ?, ?, ?)",
+            conn.execute("INSERT OR REPLACE INTO transcripts (item_id, kind, body, audio, status)"
+                         " VALUES (?, ?, ?, ?, ?)",
                          (r["id"], kind, numbered(lines), audio, status))
     return sum(kind != "none" for _, kind, _, _ in found)
 
@@ -189,8 +192,10 @@ def extract_pending(conn, cfg: dict, root: Path, issue: str) -> int:
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     with conn:
         for r, res in zip(todo, results):
-            if res.startswith("failed"):
-                conn.execute("UPDATE transcripts SET status = ? WHERE item_id = ?", (res, r["item_id"]))
+            if res.startswith("failed"):  # retried by the next preps, up to max_attempts sessions in all
+                status = "pending" if r["attempts"] + 1 < t["max_attempts"] else res
+                conn.execute("UPDATE transcripts SET status = ?, attempts = attempts + 1 WHERE item_id = ?",
+                             (status, r["item_id"]))
                 continue
             out = json.loads(res)
             for c in out["claims"]:
@@ -211,8 +216,9 @@ def extract_pending(conn, cfg: dict, root: Path, issue: str) -> int:
 
 def process(conn, cfg: dict, root: Path, issue: str) -> tuple[int, int]:
     """prep step: (transcripts found, claims added)."""
-    since = (datetime.now(timezone.utc) - timedelta(days=cfg["transcripts"]["lookback_days"]))
-    found = discover(conn, cfg, since.strftime("%Y-%m-%dT%H:%M:%SZ"))
+    t, now, fmt = cfg["transcripts"], datetime.now(timezone.utc), "%Y-%m-%dT%H:%M:%SZ"
+    found = discover(conn, cfg, (now - timedelta(days=t["lookback_days"])).strftime(fmt),
+                     (now - timedelta(hours=t["vtt_recheck_hours"])).strftime(fmt))
     return found, extract_pending(conn, cfg, root, issue)
 
 
