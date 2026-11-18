@@ -3,6 +3,7 @@ name = "news-agent"
 version = "0.1.0"
 description = "Tech/AI + macro news distillation and long-term investment thesis tracking, analysed by a local agent harness"
 requires-python = ">=3.12"
+license = "Apache-2.0"
 dependencies = [
     "numpy>=1.26",
     "torch>=2.7",

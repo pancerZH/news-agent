@@ -56,6 +56,7 @@ Persistent=true
 WantedBy=timers.target
 ```
 
+- 启用：`systemctl --user daemon-reload && systemctl --user enable --now news-agent.timer`。
 - 查看下次触发：`systemctl --user list-timers news-agent.timer`；日志：`journalctl --user -u news-agent`。
 - 手动立即跑一次：`systemctl --user start news-agent.service`；停用：`systemctl --user disable --now news-agent.timer`。
 - 机器关机或休眠错过的时间点，会在开机后补跑（`Persistent=true`）；如需在未登录时也运行，执行 `loginctl enable-linger`。
