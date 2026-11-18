@@ -1,4 +1,4 @@
-"""SQLite (WAL) storage: items, clusters, cluster_items, snapshots, runs."""
+"""SQLite (WAL) storage: items, clusters, cluster_items, snapshots, runs, transcripts, claims."""
 
 import json
 import sqlite3
@@ -54,6 +54,32 @@ CREATE TABLE IF NOT EXISTS runs (
     status TEXT,
     run_dir TEXT,
     report TEXT
+);
+CREATE TABLE IF NOT EXISTS transcripts (
+    item_id INTEGER PRIMARY KEY REFERENCES items (id),
+    kind TEXT NOT NULL,                 -- labeled (speaker labels in the text) | vtt (beehiiv captions) | none
+    body TEXT NOT NULL,                 -- one "[P0001] ..." line per paragraph or caption cue
+    audio TEXT,                         -- episode audio URL (vtt only; for `news-agent voicecheck`)
+    status TEXT NOT NULL,               -- pending | done | skipped: ... | failed: ... | none
+    speakers TEXT NOT NULL DEFAULT '[]',
+    run_id TEXT,
+    extracted TEXT
+);
+CREATE TABLE IF NOT EXISTS claims (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,   -- never reused: reports and memory cards cite TC<id>
+    item_id INTEGER NOT NULL REFERENCES items (id),
+    speaker TEXT NOT NULL,
+    role TEXT NOT NULL,                     -- host | guest | clip | unknown
+    attribution TEXT NOT NULL,              -- label | text_cue | org | role | unknown
+    para INTEGER NOT NULL,                  -- paragraph whose text contains the quote
+    quote TEXT NOT NULL,
+    claim TEXT NOT NULL,
+    type TEXT NOT NULL,                     -- fact | forecast | opinion | host_premise | hearsay
+    numbers TEXT NOT NULL DEFAULT '',
+    horizon TEXT NOT NULL DEFAULT '',
+    entities TEXT NOT NULL DEFAULT '[]',
+    theses TEXT NOT NULL DEFAULT '[]',
+    voice TEXT                              -- `news-agent voicecheck` result
 );
 """
 

@@ -24,12 +24,12 @@ hr { border: none; border-top: 1px solid #e5e7eb; margin: 24px 0; }
 """
 
 
-CLUSTER = r"`?(?<![A-Za-z0-9])C\d+(?![A-Za-z0-9])`?"  # C158, `C158`; not SC26 or C2C
+CLUSTER = r"`?(?<![A-Za-z0-9])(?:TC|C)\d+(?![A-Za-z0-9])`?"  # C158, `C158`, transcript claim TC12; not SC26 or C2C
 SEP = r"\s*[,，、/;；]\s*"
 
 
 def scrub_clusters(text: str) -> str:
-    """Drop cluster ids (kept in the report file for fact checking) and tidy the brackets they leave."""
+    """Drop cluster and claim ids (kept in the report file for fact checking) and tidy the brackets they leave."""
     text = re.sub(rf"\s*[（(]\s*{CLUSTER}(?:{SEP}{CLUSTER})*\s*[）)]", "", text)  # "（C158, C161）"
     text = re.sub(rf"{CLUSTER}(?:{SEP}{CLUSTER})*(?:{SEP}|\s+)?", "", text)  # "（`C171`，HN 87 分）"
     text = re.sub(r"（\s*[,，、;；]?\s*", "（", text)

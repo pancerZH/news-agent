@@ -8,15 +8,19 @@
 
 | 命令 | 作用 |
 | :--- | :--- |
-| `uv run news-agent prep` | 抓取信源 → 去重入库 → GPU 编码 → 72h 聚类 → `data/packets/YYYY-MM-DD.md` |
+| `uv run news-agent prep` | 抓取信源 → 去重入库 → 抽取新访谈文稿的观点 → GPU 编码 → 72h 聚类 → `data/packets/YYYY-MM-DD.md` |
 | `uv run news-agent run [--harness agy\|claude\|codex] [--no-stage]` | 必要时先 prep，再拉起 Harness 写 `reports/YYYY-MM-DD.md`，最后 verify |
 | `uv run news-agent show C123` | 打印一个事件簇的全部条目与 HN 评论 |
-| `uv run news-agent read 4567` | 打印一个条目的全文（数据包会标注有全文的条目） |
+| `uv run news-agent read 4567` | 打印一个条目的全文（数据包会标注有全文的条目）；访谈文稿带段落号 |
+| `uv run news-agent claims TC12` / `claims #2989` | 打印访谈观点的原文引文、说话人与归属依据 |
+| `uv run news-agent voicecheck TC12` | 对无说话人标注字幕里的观点，把它的声音和已具名说话人的样本片段比对（首次会下载节目音频） |
 | `uv run news-agent search 关键词 [--days 30]` | 历史条目关键词检索 |
 | `uv run news-agent review` | 让独立会话审阅暂存的 `invest/*` 变更，由程序执行 apply/discard（`run` 结束后自动执行） |
 | `uv run news-agent runs` | 最近的运行记录、日志目录与续聊命令 |
 | `uv run news-agent verify` | 记忆护栏校验（无 always、标签/前缀合规、validate 零错误、无断链） |
 | `uv run news-agent init-memory` | 幂等创建 watchlist / 宏观 / 主线 / 实体种子卡 |
+
+访谈文稿：`prep` 会识别带说话人标注的全文（Dwarkesh、Stratechery、ChipStrat、Fabricated Knowledge），以及 `vtt = true` 信源节目页面里链接的 beehiiv 字幕。近 `[transcripts] lookback_days` 天发布、关注池实体与主题词密度够高的文稿，每篇起一个 harness 会话（每次 prep 最多 `max_per_run` 篇），抽取带说话人、类型（事实、预测、观点、主持人前提、转述）和逐字引文的观点，引文必须出现在所引段落里。数据包在「访谈观点」一节列出；没有说话人标注的字幕，除非文中点名，只归到机构或角色，可以用 `voicecheck` 按声纹核实。
 
 运行后在本地生成（已被 `.gitignore` 忽略）：最新日报 `reports/latest.md`、当日数据包 `data/packets/<今天>.md`，以及 `data/lookups.jsonl`：每次 `search`/`show`/`read` 调用记一行，用来区分 agent 看过的簇和没看到的簇。
 

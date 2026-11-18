@@ -182,8 +182,9 @@ def render_cluster(c: dict, max_items: int | None = 6, summary_chars: int = 500)
 
 
 def render_packet(day: str, since: str, clusters: list[dict], panel_md: str, errors: dict, top_k: int,
-                  macro_k: int = 0) -> str:
-    """Hard-data panel, the top_k clusters in full, then up to macro_k more macro (tier 4) clusters, then the rest."""
+                  macro_k: int = 0, interviews: list[str] | None = None) -> str:
+    """Hard-data panel, the top_k clusters in full, then up to macro_k more macro (tier 4) clusters, the interview
+    claims (when given), then the rest."""
     top = clusters[:top_k]
     macro = [c for c in clusters[top_k:] if any(r["tier"] == 4 for r in c["rows"])][:macro_k]
     tail = [c for c in clusters[top_k:] if all(c is not m for m in macro)]
@@ -202,7 +203,11 @@ def render_packet(day: str, since: str, clusters: list[dict], panel_md: str, err
         lines += render_cluster(c)
     if not macro:
         lines += ["_无_", ""]
-    lines += ["## 4. 长尾事件索引", ""]
+    if interviews is not None:
+        lines += ["## 4. 访谈观点（近期抽取）", "",
+                  "说话人的观点与预测，不是已核实的事实。`〔说话人未核实〕` 表示只能确定到机构或角色。", ""]
+        lines += interviews
+    lines += [f"## {5 if interviews is not None else 4}. 长尾事件索引", ""]
     for c in tail:
         sources = sorted({r["source"] for r in c["rows"]})
         lines.append(f"- C{c['id']} · {c['score']} · {c['title']} ({', '.join(sources)})")

@@ -1,4 +1,4 @@
-"""news-agent CLI: init-memory / prep / run / review / search / show / read / verify / runs / mail."""
+"""news-agent CLI: init-memory / prep / run / review / search / show / read / claims / voicecheck / verify / runs / mail."""
 
 import argparse
 import json
@@ -8,7 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
-from . import collect, db, embed_cluster, mail, market, runner
+from . import collect, db, embed_cluster, mail, market, runner, transcripts
 
 DEFAULT_CONFIG = Path(__file__).resolve().parents[2] / "config.toml"
 
@@ -76,6 +76,12 @@ def prep(cfg: dict, root: Path, issue: str) -> Path:
                                  (text, collect.summary_of(r["summary"], text, c["fulltext_min_chars"]), r["id"]))
         log(f"fulltext: fetched {sum(len(t) > len(r['summary']) for r, t in zip(bare, texts))} of {len(bare)} items")
 
+    interviews = None
+    if cfg["transcripts"]["enabled"]:
+        found, added = transcripts.process(conn, cfg, root, issue)
+        log(f"transcripts: {found} new, {added} claims extracted")
+        interviews = transcripts.render_section(conn, since, cfg["transcripts"]["packet_claims"])
+
     snap = None
     if cfg["market"]["enabled"]:
         snap = market.snapshot(cfg["market"]["indices"], cfg["watchlist"]["tickers"], c["timeout_seconds"])
@@ -90,7 +96,8 @@ def prep(cfg: dict, root: Path, issue: str) -> Path:
     packet = root / cfg["paths"]["packets"] / f"{issue}.md"
     packet.parent.mkdir(parents=True, exist_ok=True)
     packet.write_text(embed_cluster.render_packet(issue, since, clusters, market.render(snap), errors,
-                                                  cfg["cluster"]["top_k"], cfg["cluster"]["macro_k"]), encoding="utf-8")
+                                                  cfg["cluster"]["top_k"], cfg["cluster"]["macro_k"], interviews),
+                      encoding="utf-8")
     log(f"cluster: {len(clusters)} clusters -> {packet}")
     return packet
 
@@ -221,8 +228,12 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--limit", type=int, default=30)
     p = sub.add_parser("show", help="print a cluster in full")
     p.add_argument("cluster", help="cluster id, e.g. C123 or 123")
-    p = sub.add_parser("read", help="print the full text of collected items")
+    p = sub.add_parser("read", help="print the full text of collected items (transcripts with paragraph numbers)")
     p.add_argument("items", nargs="+", help="item ids, as `show` and the packet give them")
+    p = sub.add_parser("claims", help="print transcript claims with their quotes and speakers")
+    p.add_argument("ids", nargs="+", help="claim ids (TC12) or transcript item ids (#2989)")
+    p = sub.add_parser("voicecheck", help="check by voice who said a claim from unlabeled captions")
+    p.add_argument("claims", nargs="+", help="claim ids, e.g. TC12")
     p = sub.add_parser("verify", help="check the invest/* memory guardrails")
     p.add_argument("--since", help="also check history events since this ISO time")
     p.add_argument("--staged-only", action="store_true", help="with --since: direct (unstaged) writes are problems")
@@ -283,7 +294,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if deliver(cfg, title, report) else 1
 
     conn = db.connect(root / cfg["paths"]["db"])
-    lookup = {"search": "terms", "show": "cluster", "read": "items"}.get(args.cmd)
+    lookup = {"search": "terms", "show": "cluster", "read": "items", "claims": "ids", "voicecheck": "claims"}.get(args.cmd)
     if lookup:
         value = getattr(args, lookup)
         log_lookup(root / cfg["paths"]["lookups"], args.cmd, value if isinstance(value, list) else [value])
@@ -305,7 +316,21 @@ def main(argv: list[str] | None = None) -> int:
             if r is None:
                 print(f"no item {item_id}", file=sys.stderr)
                 return 1
-            print(f"# {r['title']}\n\n{r['source']} · {r['published'][:10]} · {r['url']}\n\n{r['content'] or r['summary']}\n")
+            t = conn.execute("SELECT body FROM transcripts WHERE item_id = ? AND kind != 'none'", (r["id"],)).fetchone()
+            print(f"# {r['title']}\n\n{r['source']} · {r['published'][:10]} · {r['url']}\n\n"
+                  f"{t['body'] if t else r['content'] or r['summary']}\n")
+        return 0
+    if args.cmd == "claims":
+        out = transcripts.render_claims(conn, args.ids)
+        print(out or "no such claims", file=None if out else sys.stderr)
+        return 0 if out else 1
+    if args.cmd == "voicecheck":
+        from . import voice
+
+        embedder = voice.Embedder()
+        for raw in args.claims:
+            line = voice.check(conn, cfg, root, int(raw.upper().removeprefix("TC")), embedder)
+            print(line)
         return 0
     if args.cmd == "verify":
         problems = runner.verify(cfg["memory"], since=args.since, staged_only=args.staged_only)

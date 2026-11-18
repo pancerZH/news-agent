@@ -8,15 +8,19 @@ news-agent distills **tech/AI supply-chain + macroeconomic** news into a daily d
 
 | Command | What it does |
 | :--- | :--- |
-| `uv run news-agent prep` | Fetch feeds → dedupe into the database → GPU embedding → 72h clustering → `data/packets/YYYY-MM-DD.md` |
+| `uv run news-agent prep` | Fetch feeds → dedupe into the database → extract claims from new interview transcripts → GPU embedding → 72h clustering → `data/packets/YYYY-MM-DD.md` |
 | `uv run news-agent run [--harness agy\|claude\|codex] [--no-stage]` | Run prep if needed, launch the harness to write `reports/YYYY-MM-DD.md`, then verify |
 | `uv run news-agent show C123` | Print every item and HN comment of one event cluster |
-| `uv run news-agent read 4567` | Print the full text of an item (the packet marks items that have one) |
+| `uv run news-agent read 4567` | Print the full text of an item (the packet marks items that have one); transcripts with paragraph numbers |
+| `uv run news-agent claims TC12` / `claims #2989` | Print interview claims with their verbatim quote, speaker and how the speaker was attributed |
+| `uv run news-agent voicecheck TC12` | For a claim from unlabeled captions: compare its voice with the named speakers' sample cues (downloads the episode audio once) |
 | `uv run news-agent search <keyword> [--days 30]` | Keyword search over past items |
 | `uv run news-agent review` | Have an independent session review the staged `invest/*` changes; the program executes apply/discard (runs automatically after `run`) |
 | `uv run news-agent runs` | Recent runs, their log directories and resume commands |
 | `uv run news-agent verify` | Memory guardrail checks (no always-loaded cards, tag/prefix compliance, zero validate errors, no broken links) |
 | `uv run news-agent init-memory` | Idempotently create the watchlist / macro / thesis / entity seed cards |
+
+Interview transcripts: `prep` recognizes full texts with speaker labels (Dwarkesh, Stratechery, ChipStrat, Fabricated Knowledge) and, for feeds marked `vtt = true`, the beehiiv captions linked from the episode page. Transcripts published within `[transcripts] lookback_days` and dense enough in watchlist/theme mentions get one harness session each (at most `max_per_run` per prep) that extracts claims with a speaker, a type (fact, forecast, opinion, host premise, hearsay) and a quote that must occur in the cited paragraph. The packet lists them in "访谈观点"; captions without speaker labels are attributed only to an organization or role unless the text names the speaker, and `voicecheck` can confirm a speaker by voice.
 
 Generated locally at run time (ignored by `.gitignore`): the latest report `reports/latest.md`, today's packet `data/packets/<today>.md`, and `data/lookups.jsonl`, one line per `search`/`show`/`read` call (to tell clusters the agent looked at from ones it never saw).
 

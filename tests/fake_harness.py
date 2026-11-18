@@ -31,6 +31,23 @@ if "独立审阅员" in prompt:
     print(json.dumps({"session_id": "fake-review-1", "result": "done"}))
     sys.exit(0)
 
+if "访谈/播客/座谈的文稿" in prompt:  # transcript claim extraction: one real quote, one invented
+    source = Path(re.search(r"文稿：`([^`]+)`", prompt).group(1)).read_text()
+    output = Path(re.search(r"JSON 到 `([^`]+)`", prompt).group(1))
+    para, text = next((m.group(1), m.group(2)) for m in re.finditer(r"^\[P(\d+)\] (.*)$", source, re.M)
+                      if len(m.group(2).split()) >= 12)
+    quote = " ".join(text.split(": ", 1)[-1].split()[:10])
+    claims = [{"speaker": "Dylan Patel", "role": "guest", "attribution": "label", "paragraphs": [f"P{para}"],
+               "quote": quote, "claim_zh": "资本开支继续增长", "type": "forecast", "horizon": "2028",
+               "entities": ["NVDA"], "theses": ["ai-compute-capex"]},
+              {"speaker": "Dylan Patel", "role": "guest", "attribution": "label", "paragraphs": [f"P{para}"],
+               "quote": "words nobody said anywhere in this transcript", "claim_zh": "编造", "type": "fact",
+               "entities": ["NVDA"], "theses": []}]
+    output.write_text(json.dumps({"speakers": [{"name": "Dylan Patel", "role": "guest", "affiliation": "SemiAnalysis"}],
+                                  "claims": claims}))
+    print(json.dumps({"session_id": "fake-transcript-1", "response": "done"}))
+    sys.exit(0)
+
 packet = Path(re.search(r"\*\*当日数据包\*\*：`([^`]+)`", prompt).group(1))
 report = Path(re.search(r"中文 Markdown 写入 `([^`]+)`", prompt).group(1))
 workspace = re.search(r"MindSlice 工作区 `([^`]+)`", prompt).group(1)

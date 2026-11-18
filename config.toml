@@ -10,6 +10,7 @@ feeds = "feeds.toml"
 seeds = "memory_seeds.toml"
 prompt = "prompts/daily_brief.md"
 review_prompt = "prompts/memory_review.md"
+transcript_prompt = "prompts/transcript_claims.md"
 
 [collect]
 window_hours = 72          # 聚类与 Packet 的时间窗
@@ -99,6 +100,23 @@ keywords = [
 workspace = "~/mindslice"
 mindslice = "mindslice"          # CLI；uv run 时来自本项目 venv
 stage_scheduled_writes = true    # 定时运行的记忆写入一律进 staging/ 待审
+
+# 访谈/播客文稿：prep 时识别带说话人标注的全文与 `vtt = true` 信源的字幕，各起一个 harness 会话抽取带说话人的观点，
+# 列进数据包「访谈观点」一节。只处理近 lookback_days 天发布、[entities] 实体提及密度够高的文稿。
+[transcripts]
+enabled = true
+lookback_days = 14
+min_density = 8.0    # 每万字符的实体提及数；2026-11-18 实测：算力/半导体访谈 10–24，AI 安全、产品访谈与 Latent Space 多在 1–8
+max_per_run = 3      # 每次 prep 最多抽取几篇（每篇 agy 约 2–4 分钟、6–14 万输入 token）
+parallel = 3
+packet_claims = 8    # 数据包里每篇最多列几条（其余用 `news-agent claims #<访谈编号>` 查看）
+
+# `news-agent voicecheck TC###`：无标注字幕里的观点要写到个人名下前，用声纹比对抽取时标出的本人片段。
+# 阈值按 2026-11-18 两集带标注的 Dwarkesh 节目标定（4–6 位说话人，同一人余弦 ≥0.94、不同人 ≤0.90 占 95%）。
+[voice]
+cache = "data/audio"
+min_sim = 0.92
+min_margin = 0.05
 
 # 定时运行（staging 模式）结束后，另起一个独立会话审阅暂存的 invest/* 变更：Agent 只写决定，由程序执行 apply/discard。
 [review]

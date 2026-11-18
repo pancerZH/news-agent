@@ -1,3 +1,5 @@
+from datetime import datetime, timedelta, timezone
+from email.utils import format_datetime
 import gzip
 import json
 import re
@@ -67,7 +69,8 @@ def feed_xml(description: str, body: str | None = None) -> bytes:
     content = f"<content:encoded><![CDATA[{body}]]></content:encoded>" if body is not None else ""
     return (f'<rss version="2.0" xmlns:content="http://purl.org/rss/1.0/modules/content/"><channel><title>t</title>'
             f"<item><title>Post</title><link>https://example.com/p</link><description><![CDATA[{description}]]>"
-            f"</description>{content}<pubDate>Sun, 15 Nov 2026 08:00:00 GMT</pubDate></item></channel></rss>").encode()
+            f"</description>{content}<pubDate>{format_datetime(datetime.now(timezone.utc) - timedelta(hours=2))}</pubDate>"
+            "</item></channel></rss>").encode()
 
 
 BODY = "<p>First paragraph about <b>Rubin</b> GPUs.</p><p>Second paragraph.<br>Third line.</p>" + "<p>more text</p>" * 80
