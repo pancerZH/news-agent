@@ -1,4 +1,5 @@
 import gzip
+import json
 import re
 import sqlite3
 
@@ -130,3 +131,5 @@ def test_full_text_reaches_packet_marker_and_read_command(project, monkeypatch, 
     assert "Second paragraph.\nThird line." in out and "Fetched article.\nbody" in out
     assert cli.main([*config, "search", "Third", "line"]) == 0
     assert "Post" in capsys.readouterr().out
+    lookups = [json.loads(l) for l in (project / "data/lookups.jsonl").read_text().splitlines()]
+    assert [(l["cmd"], l["args"]) for l in lookups] == [("read", ids), ("search", ["Third", "line"])]

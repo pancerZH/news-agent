@@ -17,6 +17,14 @@ def log(msg: str) -> None:
     print(msg, file=sys.stderr, flush=True)
 
 
+def log_lookup(path: Path, cmd: str, args: list[str]) -> None:
+    """Append one search/show/read call: tells clusters the agent looked at but did not cite from unseen ones."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    line = {"ts": datetime.now(timezone.utc).isoformat(timespec="seconds"), "cmd": cmd, "args": args}
+    with path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(line, ensure_ascii=False) + "\n")
+
+
 def load_config(path: Path) -> tuple[dict, Path]:
     root = path.resolve().parent
     cfg = tomllib.loads(path.read_text(encoding="utf-8"))
@@ -275,6 +283,10 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if deliver(cfg, title, report) else 1
 
     conn = db.connect(root / cfg["paths"]["db"])
+    lookup = {"search": "terms", "show": "cluster", "read": "items"}.get(args.cmd)
+    if lookup:
+        value = getattr(args, lookup)
+        log_lookup(root / cfg["paths"]["lookups"], args.cmd, value if isinstance(value, list) else [value])
     if args.cmd == "search":
         for r in search(conn, args.terms, args.days, args.limit):
             cl = f"C{r['cluster_id']}" if r["cluster_id"] else "-"

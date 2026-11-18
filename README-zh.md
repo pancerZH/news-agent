@@ -18,7 +18,7 @@
 | `uv run news-agent verify` | 记忆护栏校验（无 always、标签/前缀合规、validate 零错误、无断链） |
 | `uv run news-agent init-memory` | 幂等创建 watchlist / 宏观 / 主线 / 实体种子卡 |
 
-运行后在本地生成（已被 `.gitignore` 忽略）：最新日报 `reports/latest.md`、当日数据包 `data/packets/<今天>.md`。
+运行后在本地生成（已被 `.gitignore` 忽略）：最新日报 `reports/latest.md`、当日数据包 `data/packets/<今天>.md`，以及 `data/lookups.jsonl`：每次 `search`/`show`/`read` 调用记一行，用来区分 agent 看过的簇和没看到的簇。
 
 ## 记忆隔离契约（`~/mindslice`）
 

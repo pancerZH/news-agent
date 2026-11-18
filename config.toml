@@ -4,6 +4,7 @@
 db = "data/news.sqlite"
 packets = "data/packets"
 runs = "data/runs"
+lookups = "data/lookups.jsonl"   # agent 的 search/show/read 调用，供日后训练簇排序
 reports = "reports"
 feeds = "feeds.toml"
 seeds = "memory_seeds.toml"
