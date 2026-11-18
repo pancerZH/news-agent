@@ -14,8 +14,8 @@ review_prompt = "prompts/memory_review.md"
 window_hours = 72          # 聚类与 Packet 的时间窗
 timeout_seconds = 20
 workers = 8
-fulltext_min_chars = 240   # 摘要短于此值的 fulltext 源补抓正文
-fulltext_max_chars = 1500
+fulltext_min_chars = 240     # 描述短于此值时，摘要改用全文开头
+fulltext_max_chars = 200000  # 全文（feed 正文或补抓）入库上限；`news-agent read` 读取
 
 [hn]
 enabled = true

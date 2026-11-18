@@ -4,7 +4,7 @@
 
 - **当日数据包**：`{{packet}}`（硬数据面板 + Top 重点事件簇 + 长尾索引），先完整阅读。
 - **上一期报告**：{{previous}}。先读它：上期已报道且无新进展的事件不再展开，重点写新增信息与进展；上期 ③ 已提议的记忆变更不要重复写入（可用 `uv run mindslice -w {{workspace}} diff` 查看仍待审的变更）。
-- **细节下钻**：`uv run news-agent show <簇编号>`（完整条目与 HN 评论）、`uv run news-agent search <关键词> --days 30`（历史条目）。
+- **细节下钻**：`uv run news-agent show <簇编号>`（完整条目与 HN 评论）、`uv run news-agent read <条目编号>`（条目标注「全文 N 字」时读原文全文；判断依据来自正文细节时先读）、`uv run news-agent search <关键词> --days 30`（历史条目）。
 - **长期记忆**：MindSlice 工作区 `{{workspace}}`。优先用 MindSlice MCP 工具（search / read / write）；若当前环境没有该 MCP，用 `uv run mindslice -w {{workspace}} search|read|write ...`。
 
 ## 步骤

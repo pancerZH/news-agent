@@ -1,4 +1,4 @@
-"""news-agent CLI: init-memory / prep / run / review / search / show / verify / runs / mail."""
+"""news-agent CLI: init-memory / prep / run / review / search / show / read / verify / runs / mail."""
 
 import argparse
 import json
@@ -56,16 +56,17 @@ def prep(cfg: dict, root: Path, issue: str) -> Path:
 
     c = cfg["collect"]
     wanted = {f["id"] for f in cfg["feeds"] if f.get("fulltext")}
-    short = [r for r in conn.execute("SELECT id, url, summary, source FROM items WHERE id > ? AND published >= ?",
-                                     (last_id, since)) if r["source"] in wanted and len(r["summary"]) < c["fulltext_min_chars"]]
-    if short:
+    bare = [r for r in conn.execute("SELECT id, url, summary, source FROM items WHERE id > ? AND published >= ?"
+                                    " AND content = ''", (last_id, since)) if r["source"] in wanted]
+    if bare:
         with ThreadPoolExecutor(c["workers"]) as pool:
-            texts = pool.map(lambda r: collect.fulltext(r["url"], c["fulltext_max_chars"], c["timeout_seconds"]), short)
-            with conn:
-                for r, text in zip(short, texts):
-                    if len(text) > len(r["summary"]):
-                        conn.execute("UPDATE items SET summary = ? WHERE id = ?", (text, r["id"]))
-        log(f"fulltext: tried {len(short)} short items")
+            texts = list(pool.map(lambda r: collect.fulltext(r["url"], c["fulltext_max_chars"], c["timeout_seconds"]), bare))
+        with conn:
+            for r, text in zip(bare, texts):
+                if len(text) > len(r["summary"]):
+                    conn.execute("UPDATE items SET content = ?, summary = ? WHERE id = ?",
+                                 (text, collect.summary_of(r["summary"], text, c["fulltext_min_chars"]), r["id"]))
+        log(f"fulltext: fetched {sum(len(t) > len(r['summary']) for r, t in zip(bare, texts))} of {len(bare)} items")
 
     snap = None
     if cfg["market"]["enabled"]:
@@ -181,8 +182,8 @@ def load_cluster(conn, cluster_id: int) -> dict | None:
 
 
 def search(conn, terms: list[str], days: int, limit: int) -> list:
-    where = " AND ".join(["(title LIKE ? OR summary LIKE ?)"] * len(terms))
-    params = [p for t in terms for p in (f"%{t}%", f"%{t}%")]
+    where = " AND ".join(["(title LIKE ? OR summary LIKE ? OR content LIKE ?)"] * len(terms))
+    params = [p for t in terms for p in (f"%{t}%",) * 3]
     return conn.execute(
         f"SELECT i.*, (SELECT MAX(ci.cluster_id) FROM cluster_items ci WHERE ci.item_id = i.id) AS cluster_id"
         f" FROM items i WHERE published >= ? AND {where} ORDER BY published DESC LIMIT ?",
@@ -212,6 +213,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--limit", type=int, default=30)
     p = sub.add_parser("show", help="print a cluster in full")
     p.add_argument("cluster", help="cluster id, e.g. C123 or 123")
+    p = sub.add_parser("read", help="print the full text of collected items")
+    p.add_argument("items", nargs="+", help="item ids, as `show` and the packet give them")
     p = sub.add_parser("verify", help="check the invest/* memory guardrails")
     p.add_argument("--since", help="also check history events since this ISO time")
     p.add_argument("--staged-only", action="store_true", help="with --since: direct (unstaged) writes are problems")
@@ -283,6 +286,14 @@ def main(argv: list[str] | None = None) -> int:
             print(f"no cluster {args.cluster}", file=sys.stderr)
             return 1
         print("\n".join(embed_cluster.render_cluster(c, max_items=None, summary_chars=3000)))
+        return 0
+    if args.cmd == "read":
+        for item_id in args.items:
+            r = conn.execute("SELECT * FROM items WHERE id = ?", (int(item_id.lstrip("#")),)).fetchone()
+            if r is None:
+                print(f"no item {item_id}", file=sys.stderr)
+                return 1
+            print(f"# {r['title']}\n\n{r['source']} · {r['published'][:10]} · {r['url']}\n\n{r['content'] or r['summary']}\n")
         return 0
     if args.cmd == "verify":
         problems = runner.verify(cfg["memory"], since=args.since, staged_only=args.staged_only)

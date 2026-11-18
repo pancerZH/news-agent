@@ -1,5 +1,5 @@
 # 信源清单。tier: 1 产业深度 / 2 AI 一手 / 3 社区检验 / 4 宏观。
-# fulltext = true: 摘要过短时用 trafilatura 补抓正文。
+# fulltext = true: feed 不带正文时用 trafilatura 补抓全文。
 # Hacker News 与硬数据面板（国债曲线 + yfinance）是内置模块，参数见 config.toml 的 [hn] / [market]。
 
 # ---- Tier 1: 半导体、AI 基础设施与科技商业战略 ----

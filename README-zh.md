@@ -11,6 +11,7 @@
 | `uv run news-agent prep` | 抓取信源 → 去重入库 → GPU 编码 → 72h 聚类 → `data/packets/YYYY-MM-DD.md` |
 | `uv run news-agent run [--harness agy\|claude\|codex] [--no-stage]` | 必要时先 prep，再拉起 Harness 写 `reports/YYYY-MM-DD.md`，最后 verify |
 | `uv run news-agent show C123` | 打印一个事件簇的全部条目与 HN 评论 |
+| `uv run news-agent read 4567` | 打印一个条目的全文（数据包会标注有全文的条目） |
 | `uv run news-agent search 关键词 [--days 30]` | 历史条目关键词检索 |
 | `uv run news-agent review` | 让独立会话审阅暂存的 `invest/*` 变更，由程序执行 apply/discard（`run` 结束后自动执行） |
 | `uv run news-agent runs` | 最近的运行记录、日志目录与续聊命令 |

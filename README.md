@@ -11,6 +11,7 @@ news-agent distills **tech/AI supply-chain + macroeconomic** news into a daily d
 | `uv run news-agent prep` | Fetch feeds → dedupe into the database → GPU embedding → 72h clustering → `data/packets/YYYY-MM-DD.md` |
 | `uv run news-agent run [--harness agy\|claude\|codex] [--no-stage]` | Run prep if needed, launch the harness to write `reports/YYYY-MM-DD.md`, then verify |
 | `uv run news-agent show C123` | Print every item and HN comment of one event cluster |
+| `uv run news-agent read 4567` | Print the full text of an item (the packet marks items that have one) |
 | `uv run news-agent search <keyword> [--days 30]` | Keyword search over past items |
 | `uv run news-agent review` | Have an independent session review the staged `invest/*` changes; the program executes apply/discard (runs automatically after `run`) |
 | `uv run news-agent runs` | Recent runs, their log directories and resume commands |

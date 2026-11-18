@@ -16,6 +16,7 @@ import feedparser
 USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36"
 HN_API = "https://hn.algolia.com/api/v1"
 TRACKING_PARAMS = {"ref", "ref_src", "fbclid", "gclid", "mc_cid", "mc_eid"}
+SUMMARY_CHARS = 3000
 
 
 def now_iso() -> str:
@@ -43,6 +44,21 @@ def clean_text(s: str | None) -> str:
     return re.sub(r"\s+", " ", html.unescape(s)).strip()
 
 
+BLOCK_BREAK = re.compile(r"</(?:p|div|h[1-6]|li|blockquote|pre|tr|figcaption)>|<br\s*/?>", re.I)
+
+
+def clean_block(s: str | None) -> str:
+    """clean_text that keeps paragraph breaks: one line per paragraph (for full text)."""
+    lines = (clean_text(line) for line in BLOCK_BREAK.sub("\n", s or "").split("\n"))
+    return "\n".join(line for line in lines if line)
+
+
+def summary_of(description: str, content: str, min_chars: int) -> str:
+    """The feed's description, or the head of the full text when the description is a teaser and the text longer."""
+    teaser = len(description) < min_chars and len(content) > len(description)
+    return (clean_text(content) if teaser else description)[:SUMMARY_CHARS]
+
+
 def decode_body(data: bytes) -> bytes:
     """Undo a bare gzip body (served without Content-Encoding) and drop a UTF-8 BOM."""
     if data[:2] == b"\x1f\x8b":
@@ -60,7 +76,9 @@ def fetch_json(url: str, timeout: float = 20):
     return json.loads(fetch(url, timeout))
 
 
-def parse_feed(feed: dict, data: bytes, fetched: str) -> list[dict]:
+def parse_feed(feed: dict, data: bytes, fetched: str, min_chars: int = 240, max_chars: int = 200_000) -> list[dict]:
+    """Items with ``summary`` (short, for the packet and clustering) and ``content`` (the full text the feed
+    carries: content:encoded, or a description longer than a summary; '' when it has none)."""
     parsed = feedparser.parse(decode_body(data))
     items = []
     for e in parsed.entries:
@@ -69,10 +87,13 @@ def parse_feed(feed: dict, data: bytes, fetched: str) -> list[dict]:
             continue
         stamp = e.get("published_parsed") or e.get("updated_parsed")
         published = to_iso(calendar.timegm(stamp)) if stamp else fetched
-        summary = e.get("summary") or (e.get("content") or [{}])[0].get("value", "")
+        description = clean_text(e.get("summary"))
+        content = clean_block((e.get("content") or [{}])[0].get("value", ""))
+        if not content and len(description) > SUMMARY_CHARS:
+            content = clean_block(e.get("summary"))
         items.append({"source": feed["id"], "tier": feed["tier"], "url": link, "canonical_url": canonical_url(link),
-                      "title": title, "summary": clean_text(summary)[:3000],
-                      "published": min(published, fetched), "fetched": fetched})
+                      "title": title, "summary": summary_of(description, content, min_chars),
+                      "content": content[:max_chars], "published": min(published, fetched), "fetched": fetched})
     return items
 
 
@@ -126,7 +147,8 @@ def collect_all(feeds: list[dict], cfg: dict) -> tuple[list[dict], dict[str, str
     items, errors = [], {}
 
     def one(feed):
-        return parse_feed(feed, fetch(feed["url"], timeout), fetched)
+        return parse_feed(feed, fetch(feed["url"], timeout), fetched,
+                          cfg["collect"]["fulltext_min_chars"], cfg["collect"]["fulltext_max_chars"])
 
     with ThreadPoolExecutor(cfg["collect"]["workers"]) as pool:
         futures = {f["id"]: pool.submit(one, f) for f in feeds}
@@ -150,4 +172,4 @@ def fulltext(url: str, max_chars: int, timeout: float = 20) -> str:
         text = trafilatura.extract(fetch(url, timeout).decode("utf-8", "replace"), include_comments=False)
     except Exception:
         return ""
-    return clean_text(text)[:max_chars]
+    return clean_block(text)[:max_chars]

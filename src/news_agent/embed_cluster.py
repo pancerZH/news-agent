@@ -159,6 +159,8 @@ def render_item(r, summary_chars: int = 500) -> list[str]:
                f"{r['hn_comments']} comments · [讨论](https://news.ycombinator.com/item?id={r['hn_id']})"
     else:
         head = f"- [T{r['tier']} {r['source']}] {r['published'][:10]} [{r['title']}]({r['url']})"
+    if len(r["content"]) > min(len(r["summary"]), summary_chars):
+        head += f" · 全文 {len(r['content']):,} 字（`uv run news-agent read {r['id']}`）"
     lines = [head]
     if r["summary"]:
         lines.append(f"  > {r['summary'][:summary_chars]}")

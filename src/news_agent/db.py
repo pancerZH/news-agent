@@ -13,6 +13,7 @@ CREATE TABLE IF NOT EXISTS items (
     canonical_url TEXT NOT NULL,
     title TEXT NOT NULL,
     summary TEXT NOT NULL DEFAULT '',
+    content TEXT NOT NULL DEFAULT '',  -- full text (feed body or fetched); '' when none
     published TEXT NOT NULL,            -- ISO-8601 UTC, e.g. 2026-11-16T08:00:00Z
     fetched TEXT NOT NULL,
     hn_id INTEGER,
@@ -64,11 +65,14 @@ def connect(path: str | Path) -> sqlite3.Connection:
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
     conn.executescript(SCHEMA)
+    if "content" not in {r["name"] for r in conn.execute("PRAGMA table_info(items)")}:  # databases before full text
+        conn.execute("ALTER TABLE items ADD COLUMN content TEXT NOT NULL DEFAULT ''")
     return conn
 
 
 def upsert_items(conn: sqlite3.Connection, items: list[dict]) -> int:
-    """Insert new items; refresh title/summary/HN stats of known ones. Returns the number of new rows."""
+    """Insert new items; refresh title/HN stats of known ones and fill in a longer full text. Returns the number
+    of new rows. A known item's summary is kept: its embedding was computed from it."""
     new = 0
     with conn:
         for it in items:
@@ -76,16 +80,18 @@ def upsert_items(conn: sqlite3.Connection, items: list[dict]) -> int:
                                  (it["source"], it["canonical_url"])).fetchone()
             if known is None:
                 conn.execute(
-                    "INSERT INTO items (source, tier, url, canonical_url, title, summary, published, fetched,"
-                    " hn_id, hn_points, hn_comments, hn_top_comments) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                    "INSERT INTO items (source, tier, url, canonical_url, title, summary, content, published, fetched,"
+                    " hn_id, hn_points, hn_comments, hn_top_comments) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (it["source"], it["tier"], it["url"], it["canonical_url"], it["title"], it.get("summary", ""),
-                     it["published"], it["fetched"], it.get("hn_id"), it.get("hn_points", 0),
+                     it.get("content", ""), it["published"], it["fetched"], it.get("hn_id"), it.get("hn_points", 0),
                      it.get("hn_comments", 0), json.dumps(it.get("hn_top_comments", []), ensure_ascii=False)))
                 new += 1
             else:
                 conn.execute(
                     "UPDATE items SET title = ?, hn_points = MAX(hn_points, ?), hn_comments = MAX(hn_comments, ?)"
                     " WHERE id = ?", (it["title"], it.get("hn_points", 0), it.get("hn_comments", 0), known["id"]))
+                conn.execute("UPDATE items SET content = ? WHERE id = ? AND length(content) < length(?)",
+                             (it.get("content", ""), known["id"], it.get("content", "")))
                 if it.get("hn_top_comments"):
                     conn.execute("UPDATE items SET hn_top_comments = ? WHERE id = ?",
                                  (json.dumps(it["hn_top_comments"], ensure_ascii=False), known["id"]))
