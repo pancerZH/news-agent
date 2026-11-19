@@ -198,17 +198,14 @@ def save_meta(run_dir: Path, meta: dict) -> dict:
     return meta
 
 
-def run_harness(cfg: dict, root: Path, issue: str, title: str, harness: str, stage: bool, packet: Path, report: Path,
+def run_harness(cfg: dict, root: Path, issue: str, title: str, harness: str, packet: Path, report: Path,
                 previous: Path | None = None) -> dict:
     mem = cfg["memory"]
     run_id, run_dir = new_run_dir(cfg, root, f"{issue}-{harness}")
     report.parent.mkdir(parents=True, exist_ok=True)
-    write_rule = ("本次为定时无人值守运行：所有 MindSlice 写入必须暂存待审——MCP `write` 一律传 `stage=true`，"
-                  "CLI 一律加 `--stage`。" if stage else
-                  "本次为人工触发运行：确认后的变更可直接写入 `@overlay/invest/*`。")
     prompt = render_prompt((root / cfg["paths"]["prompt"]).read_text(encoding="utf-8"), date=issue[:10], title=title,
                            packet=packet, report=report, previous=f"`{previous}`" if previous else "无（这是第一期）",
-                           workspace=Path(mem["workspace"]).expanduser(), project=root, write_rule=write_rule)
+                           workspace=Path(mem["workspace"]).expanduser(), project=root, run_dir=run_dir)
     started, t0 = now_iso(), time.time()
     res = launch(cfg, root, run_dir, harness, prompt)
     if not report.exists() or report.stat().st_mtime < t0:
@@ -220,11 +217,11 @@ def run_harness(cfg: dict, root: Path, issue: str, title: str, harness: str, sta
         latest.unlink(missing_ok=True)
         latest.symlink_to(report.name)
 
-    problems = verify(mem, since=started, staged_only=stage)
+    problems = verify(mem, since=started, staged_only=True)
     status = res["status"] if res["status"] != "ok" else (
         "no report" if not report.exists() else "guardrail problems" if problems else "ok")
     return save_meta(run_dir, {
-        "run_id": run_id, "day": issue, "harness": harness, "stage": stage, "started": started, "finished": now_iso(),
+        "run_id": run_id, "day": issue, "harness": harness, "started": started, "finished": now_iso(),
         "exit_code": res["exit_code"], "status": status, "session_id": res["session_id"], "resume": res["resume"],
         "run_dir": str(run_dir), "report": str(report) if report.exists() else None, "problems": problems,
         "warnings": others_since(Path(mem["workspace"]).expanduser(), started), "cmd": res["cmd"]})
@@ -299,7 +296,7 @@ def run_review(cfg: dict, root: Path, issue: str, harness: str, packet: Path, re
         f"| {o['address']} | {o['decision']} | {o['reason']} |\n" for o in outcome), encoding="utf-8")
     status = res["status"] if res["status"] != "ok" else "guardrail problems" if problems else "ok"
     return save_meta(run_dir, {
-        "run_id": run_id, "day": issue, "harness": harness, "stage": False, "started": started, "finished": now_iso(),
+        "run_id": run_id, "day": issue, "harness": harness, "started": started, "finished": now_iso(),
         "exit_code": res["exit_code"], "status": status, "session_id": res["session_id"], "resume": res["resume"],
         "run_dir": str(run_dir), "report": str(run_dir / "review.md"), "problems": problems, "warnings": warnings,
         "decisions": outcome, "cmd": res["cmd"]})

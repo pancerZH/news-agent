@@ -9,13 +9,14 @@
 | 命令 | 作用 |
 | :--- | :--- |
 | `uv run news-agent prep` | 抓取信源 → 去重入库 → 抽取新访谈文稿的观点 → GPU 编码 → 72h 聚类 → `data/packets/YYYY-MM-DD.md` |
-| `uv run news-agent run [--harness agy\|claude\|codex] [--no-stage]` | 必要时先 prep，再拉起 Harness 写 `reports/YYYY-MM-DD.md`，最后 verify |
+| `uv run news-agent run [--harness agy\|claude\|codex] [--no-review]` | 必要时先 prep，再拉起 Harness 写 `reports/YYYY-MM-DD.md`，最后 verify 并审阅提出的记忆变更 |
 | `uv run news-agent show C123` | 打印一个事件簇的全部条目与 HN 评论 |
 | `uv run news-agent read 4567` | 打印一个条目的全文（数据包会标注有全文的条目）；访谈文稿带段落号 |
 | `uv run news-agent claims TC12` / `claims #2989` | 打印访谈观点的原文引文、说话人与归属依据 |
 | `uv run news-agent voicecheck TC12` | 对无说话人标注字幕里的观点，把它的声音和已具名说话人的样本片段比对（首次会下载节目音频） |
 | `uv run news-agent search 关键词 [--days 30]` | 历史条目关键词检索 |
 | `uv run news-agent review` | 让独立会话审阅暂存的 `invest/*` 变更，由程序执行 apply/discard（`run` 结束后自动执行） |
+| `uv run news-agent propose changes.json` | Harness 修改记忆的唯一途径：检查 `invest/*` 变更（JSON，字段同 MindSlice `write`）后暂存待审 |
 | `uv run news-agent runs` | 最近的运行记录、日志目录与续聊命令 |
 | `uv run news-agent verify` | `invest/` 记忆护栏校验（无 always、卡片都带 `invest` 标签、validate 零错误、无断链） |
 | `uv run news-agent init-memory` | 幂等创建 watchlist / 宏观 / 主线 / 实体种子卡 |
@@ -31,8 +32,8 @@
 - 只记录能强化、削弱或证伪长期假设、或改变实体 / 宏观格局的慢变量；流水新闻留在 `data/news.sqlite`。
 - 主线卡正文：`核心假设 (Premise)` / `当前状态与置信度 (Conviction)` / `关键验证记录 (Evidence)`（`[YYYY-MM-DD] ...`）/ `预设证伪条件 (Kill Criteria)`。
 - 实体卡 `aliases` 必填中英文名、Ticker、核心产品代号（便于 BM25 词法召回）。
-- 链接：同在 `@overlay` 写 `[[invest/...]]`；引用已烘焙进 `@invest` 的卡片写 `[[@invest/invest/...]]`。
-- 交互会话中经用户确认的变更直接写 `@overlay/invest/*`；定时运行的写入进入 `staging/`，运行结束后由独立审阅会话逐条判断（出处、慢变量、去重、结构、结论克制），审阅 Agent 只写决定，由程序只对 `@overlay/invest/*` 执行 apply/discard；审阅期间 `invest/` 下若有改动则不执行任何决定。记忆库与其他会话共用，运行或审阅期间 `invest/` 以外的写入只打印为警告（`~`），不会让运行失败。审阅没有完成（决定被拦下、保留待审或执行失败）时，另发一封简短通知给发信账号本身（或 `smtp.toml` 里的 `notify`），不发给日报的 `to` 列表。审阅记录在 `data/runs/*-review-*/review.md`。
+- 链接：已在 `@invest` 里的卡片写 `[[@invest/invest/...]]`，只在 `@overlay` 里的写 `[[invest/...]]`。
+- 交互会话中经用户确认的变更直接写 `@overlay/invest/*`；Harness 运行只能经 `news-agent propose` 写记忆，它逐条检查（卡片 id、op、`load`、`invest` 标签、链接；主线卡不许 append）后一律暂存；agy 会话里 MindSlice 自带的 write 被禁用（`config.toml` 里的 `--settings` deny 规则），`verify` 仍会标出任何对 `invest/` 的直写。运行结束后由独立审阅会话逐条判断（出处、慢变量、去重、结构、结论克制），审阅 Agent 只写决定，由程序只对 `@overlay/invest/*` 执行 apply/discard；审阅期间 `invest/` 下若有改动则不执行任何决定。记忆库与其他会话共用，运行或审阅期间 `invest/` 以外的写入只打印为警告（`~`），不会让运行失败。审阅没有完成（决定被拦下、保留待审或执行失败）时，另发一封简短通知给发信账号本身（或 `smtp.toml` 里的 `notify`），不发给日报的 `to` 列表。审阅记录在 `data/runs/*-review-*/review.md`。
 - 归档：`mindslice bake -w ~/mindslice @invest --prefix invest/`。
 
 ## 定时运行（systemd 用户定时器示例：每天 07:30 早报、18:00 晚报，按系统本地时间）

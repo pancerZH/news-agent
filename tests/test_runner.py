@@ -71,5 +71,3 @@ def test_unstaged_write_in_scheduled_run_fails(project, workspace, monkeypatch, 
     assert cli.main([*config, "run"]) == 1
     out = capsys.readouterr().out
     assert "status: guardrail problems" in out and "未经 staging 的直写" in out
-    # an interactive (--no-stage) run allows the same direct write
-    assert cli.main([*config, "run", "--no-stage"]) == 0

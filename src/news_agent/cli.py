@@ -1,4 +1,5 @@
-"""news-agent CLI: init-memory / prep / run / review / search / show / read / claims / voicecheck / verify / runs / mail."""
+"""news-agent CLI: init-memory / prep / run / review / propose / search / show / read / claims / voicecheck / verify / runs /
+mail."""
 
 import argparse
 import json
@@ -8,7 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
-from . import collect, db, embed_cluster, mail, market, runner, transcripts
+from . import collect, db, embed_cluster, mail, market, propose, runner, transcripts
 
 DEFAULT_CONFIG = Path(__file__).resolve().parents[2] / "config.toml"
 
@@ -237,9 +238,11 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--day", default=date.today().isoformat())
     p.add_argument("--edition", **edition)
     p.add_argument("--prep", action="store_true", help="re-run prep even if this edition's packet exists")
-    p.add_argument("--no-stage", action="store_true", help="let the harness write memory directly (no staging)")
+    p.add_argument("--no-review", action="store_true", help="skip the memory review: proposals stay in staging")
     p = sub.add_parser("review", help="let an independent session review the staged invest/* memory changes")
     p.add_argument("--harness")
+    p = sub.add_parser("propose", help="check invest/* memory changes (JSON) and stage them for review")
+    p.add_argument("source", help="JSON file with one change or a list of them ('-' = stdin)")
     p = sub.add_parser("search", help="keyword search over collected items")
     p.add_argument("terms", nargs="+")
     p.add_argument("--days", type=int, default=30)
@@ -277,16 +280,15 @@ def main(argv: list[str] | None = None) -> int:
         packet = root / cfg["paths"]["packets"] / f"{issue}.md"
         if args.prep or not packet.exists():
             prep(cfg, root, issue)
-        stage = cfg["memory"]["stage_scheduled_writes"] and not args.no_stage
         report = root / cfg["paths"]["reports"] / f"{issue}.md"
         previous = previous_report(report.parent, issue)
-        log(f"run: {issue} with {harness} (stage={stage}, previous={previous.name if previous else None}) ...")
-        meta = runner.run_harness(cfg, root, issue, title, harness, stage, packet, report, previous)
+        log(f"run: {issue} with {harness} (previous={previous.name if previous else None}) ...")
+        meta = runner.run_harness(cfg, root, issue, title, harness, packet, report, previous)
         record_run(cfg, root, meta)
         print(f"status: {meta['status']}\nreport: {meta['report']}\nlogs:   {meta['run_dir']}\nresume: {meta['resume']}")
         print_problems(meta)
         ok = deliver(cfg, title, report, meta["status"]) if meta["report"] else True
-        if stage and cfg["review"]["enabled"]:
+        if cfg["review"]["enabled"] and not args.no_review:
             ok = review(cfg, root, issue, harness, packet, report) and ok
         return 0 if meta["status"] == "ok" and ok else 1
 
@@ -294,6 +296,18 @@ def main(argv: list[str] | None = None) -> int:
         report = (root / cfg["paths"]["reports"] / "latest.md").resolve()
         packet = root / cfg["paths"]["packets"] / f"{report.stem}.md"
         return 0 if review(cfg, root, report.stem, args.harness or cfg["harness"]["default"], packet, report) else 1
+
+    if args.cmd == "propose":
+        try:
+            writes = propose.load(args.source, sys.stdin)
+        except (OSError, json.JSONDecodeError) as e:
+            print(f"无法读取变更 JSON: {e}", file=sys.stderr)
+            return 1
+        staged, problems = propose.propose(cfg["memory"], writes)
+        print("\n".join(staged) or "nothing staged")
+        for prob in problems:
+            print(f"  ! {prob}", file=sys.stderr)
+        return 1 if problems else 0
 
     if args.cmd == "mail":
         report = root / cfg["paths"]["reports"] / f"{issue}.md"

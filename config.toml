@@ -99,7 +99,6 @@ keywords = [
 [memory]
 workspace = "~/mindslice"
 mindslice = "mindslice"          # CLI；uv run 时来自本项目 venv
-stage_scheduled_writes = true    # 定时运行的记忆写入一律进 staging/ 待审
 
 # 访谈/播客文稿：prep 时识别带说话人标注的全文与 `vtt = true` 信源的字幕，各起一个 harness 会话抽取带说话人的观点，
 # 列进数据包「访谈观点」一节。只处理近 lookback_days 天发布、[entities] 实体提及密度够高的文稿。
@@ -135,13 +134,16 @@ default = "agy"
 timeout_minutes = 45
 
 [harness.agy]
+# 记忆只能经 `news-agent propose` 写入（一律进 staging/）：本会话禁用 MindSlice 的直写通道
 cmd = ["agy", "--print={prompt}", "--model", "gemini-4-hydrogen-high", "--output-format", "json",
-       "--dangerously-skip-permissions", "--disable-slash-commands"]
+       "--dangerously-skip-permissions", "--disable-slash-commands", "--settings",
+       '{"permissions":{"deny":["mcp(mindslice_mindslice/write)","command(mindslice write)","command(uv run mindslice write)"]}}']
 resume = "agy --conversation {session_id}"
 
 [harness.claude]
 cmd = ["claude", "-p", "{prompt}", "--output-format", "json", "--permission-mode", "acceptEdits",
-       "--allowedTools", "mcp__plugin_mindslice_mindslice,Read,Write,Edit,Glob,Grep,Bash(uv run news-agent:*)"]
+       "--allowedTools",
+       "mcp__plugin_mindslice_mindslice__search,mcp__plugin_mindslice_mindslice__read,Read,Write,Edit,Glob,Grep,Bash(uv run news-agent:*)"]
 resume = "claude --resume {session_id}"
 
 [harness.codex]

@@ -82,7 +82,7 @@ def test_blocked_review_notifies_the_owner_only(project, workspace, monkeypatch,
 
 def test_review_command_ignores_foreign_decisions_and_keeps_undecided_pending(project, workspace, monkeypatch, capsys):
     args = setup(project, workspace, monkeypatch)
-    assert cli.main([*args, "run", "--edition", "am", "--no-stage"]) == 0  # a report, no review
+    assert cli.main([*args, "run", "--edition", "am", "--no-review"]) == 0  # a report, no review
     ms(workspace, "write", "invest/theses/x", "--title", "x", "--summary", "s", "--content", "- x",
        "--tag", "invest", "--stage", "--reason", "r")
     monkeypatch.setenv("FAKE_REVIEW_MODE", "outsider")
