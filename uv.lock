@@ -972,7 +972,7 @@ dev = [
 requires-dist = [
     { name = "feedparser", specifier = ">=6.0" },
     { name = "markdown-it-py", specifier = ">=3.0" },
-    { name = "mindslice", specifier = ">=0.2.0" },
+    { name = "mindslice", specifier = ">=0.2.5" },
     { name = "numpy", specifier = ">=1.26" },
     { name = "sentence-transformers", specifier = ">=6.0" },
     { name = "soundfile", specifier = ">=0.14.0" },
