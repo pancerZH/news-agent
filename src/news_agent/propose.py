@@ -6,12 +6,16 @@ import re
 from collections import Counter
 from pathlib import Path
 
-from .runner import invest_slice_dir, mindslice
+from mindslice import MindSliceError, Workspace
+from mindslice.model.card import parse_card
+from mindslice.operations.writer import mounted_base
+
+from .runner import invest_slice_dir
 
 ID = re.compile(r"invest/watchlist|invest/(macro|theses|entities)/[a-z0-9][a-z0-9-]*")
 OPS = ("create", "replace", "patch", "append")
 LINK = re.compile(r"\[\[([^\]|]+)")
-LISTS = {"tags": "--tag", "aliases": "--alias", "extends": "--extends", "supersedes": "--supersedes"}
+LISTS = {"tags", "aliases", "extends", "supersedes"}
 SECTIONS = ("**核心假设 (Premise)**", "**当前状态与置信度 (Conviction)**", "**关键验证记录 (Evidence)**",
             "**预设证伪条件 (Kill Criteria)**")
 DATED = re.compile(r"\[\d{4}-\d{2}-\d{2}\]")
@@ -68,14 +72,15 @@ def _body(w: dict) -> str:
     return "\n".join(content) if isinstance(content, list) else content
 
 
-def current_body(mem: dict, card: str) -> str:
-    try:
-        return json.loads(mindslice(mem, "read", card).stdout).get("body", "")
-    except json.JSONDecodeError:
-        return ""
+def current_body(engine, table, card: str) -> str:
+    raw, _ = engine.staging.prospective_state(card, table.overlay.root)
+    if raw is None:
+        base = mounted_base(engine, table, card)
+        raw = base[1] if base else ""
+    return parse_card(raw).body
 
 
-def check_thesis(mem: dict, w: dict) -> list[str]:
+def check_thesis(engine, table, w: dict) -> list[str]:
     """Thesis cards keep their four sections, and no change drops a section or a dated evidence entry: a rewrite is
     compared with the current card, a patch edit with the text it replaces."""
     card, op = w["id"], w.get("op", "create")
@@ -88,7 +93,7 @@ def check_thesis(mem: dict, w: dict) -> list[str]:
         missing = [s for s in SECTIONS if s not in text]
         if missing:
             return [f"{card}: 主线卡正文要有这四段：{'、'.join(SECTIONS)}；缺少 {'、'.join(missing)}"]
-        pairs = [(current_body(mem, card), text)] if op == "replace" else []
+        pairs = [(current_body(engine, table, card), text)] if op == "replace" else []
     problems = []
     for old, new in pairs:
         lost = [s for s in SECTIONS if s in old and s not in new]
@@ -98,49 +103,45 @@ def check_thesis(mem: dict, w: dict) -> list[str]:
     return problems
 
 
-def write_args(w: dict) -> list[str]:
-    op = w.get("op", "create")
-    args = ["write", w["id"], "--op", op, "--stage", "--reason", w["reason"]]
-    for key in ("title", "summary"):
-        if w.get(key):
-            args += [f"--{key}", w[key]]
-    if w.get("content"):
-        args += ["--content", _body(w)]
-    tags = list(w.get("tags") or [])
-    if (op == "create" or "tags" in w) and "invest" not in tags:
-        tags.insert(0, "invest")
-    for key, flag in LISTS.items():
-        for value in tags if key == "tags" else w.get(key) or []:
-            args += [flag, value]
-    for e in w.get("edits") or []:
-        args += ["--edit", e["old"], e["new"]]
-    return args
+class ProposalRejected(ValueError):
+    """Abort the journalled batch after collecting validation errors."""
 
 
 def propose(mem: dict, writes: list[dict]) -> tuple[list[str], list[str]]:
-    """(staged lines, problems). Nothing is written unless every change passes the checks."""
+    """Validate each proposal against its predecessor. Publish all staging changes together."""
     ws = Path(mem["workspace"]).expanduser()
-    baked = invest_slice_dir(ws)
     batch = {w["id"] for w in writes if isinstance(w, dict) and isinstance(w.get("id"), str)}
-    problems = []
-    for w in writes:  # the thesis checks need a well-formed change
-        problems += check(w, ws, baked, batch) or check_thesis(mem, w)
-    if problems:
-        return [], problems
-    staged = []
-    for w in writes:
-        res = mindslice(mem, *write_args(w))
+    problems, staged = [], []
+    with Workspace(ws) as engine, engine._writing() as table:
+        baked = invest_slice_dir(ws)
         try:
-            out = json.loads(res.stdout)
-        except json.JSONDecodeError:
-            out = {}
-        if res.returncode != 0 or not out.get("staged"):
-            problems.append(f"{w['id']}: 写入失败: {res.stderr.strip() or res.stdout.strip()}")
-            continue
-        staged.append(f"staged: {out['address']} ({w.get('op', 'create')})"
-                      + "".join(f"\n  warning: {x.get('message', x) if isinstance(x, dict) else x}"
-                                for x in out.get("warnings") or []))
-    return staged, problems
+            with engine.history.batch():
+                for w in writes:
+                    try:
+                        issues = check(w, ws, baked, batch) or check_thesis(engine, table, w)
+                        if issues:
+                            problems.extend(issues)
+                            continue
+                        spec = {k: v for k, v in w.items() if v not in (None, "", [])}  # empty = leave as is
+                        op = spec.get("op", "create")
+                        if op == "create" or "tags" in w:
+                            tags = list(spec.get("tags") or [])
+                            spec["tags"] = tags if "invest" in tags else ["invest", *tags]
+                        if "content" in spec:
+                            spec["content"] = _body(spec)
+                        out = engine.write(**spec, stage=True)
+                    except (MindSliceError, AttributeError, KeyError, TypeError, ValueError) as exc:
+                        card = w.get("id") if isinstance(w, dict) else "?"
+                        problems.append(f"{card}: 写入失败: {exc}")
+                        continue
+                    staged.append(f"staged: {out['address']} ({op})" + "".join(
+                        f"\n  warning: {x.get('message', x) if isinstance(x, dict) else x}"
+                        for x in out.get("warnings") or []))
+                if problems:
+                    raise ProposalRejected
+        except ProposalRejected:
+            return [], problems
+    return staged, []
 
 
 def load(source: str, stdin) -> list[dict]:

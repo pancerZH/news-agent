@@ -86,3 +86,15 @@ def test_thesis_cards_keep_their_sections_and_dated_evidence(mem, workspace):
     keep = {"id": card, "op": "patch", "reason": "r",
             "edits": [{"old": "[2026-11-18] a (C1)", "new": "[2026-11-19] new (C3)；[2026-11-18] a (C1)"}]}
     assert propose(mem, [keep])[1] == []
+
+
+def test_rejected_batch_preserves_the_existing_staged_evidence(mem, workspace):
+    saved = {"id": "invest/theses/ai-compute-capex", "op": "replace", "reason": "r",
+             "content": thesis("[2026-11-19] first observation")}
+    assert propose(mem, [saved])[1] == []
+    before = ms(workspace, "--json", "diff").stdout
+    new = {"id": "invest/macro/new", "reason": "r", "summary": "New observation."}
+    for bad in ({**saved, "content": thesis("no dates")}, {**new, "id": "invest/macro/missing", "op": "replace"}):
+        staged, problems = propose(mem, [new, bad])
+        assert problems and not staged
+        assert ms(workspace, "--json", "diff").stdout == before

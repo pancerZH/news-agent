@@ -9,6 +9,8 @@ import tomllib
 from datetime import datetime, timezone
 from pathlib import Path
 
+from mindslice import MindSliceError, Workspace
+
 STRIP_PREFIXES = ("ANTIGRAVITY_", "CLAUDE_CODE_", "CODEX_", "MINDSLICE_PLUGIN_", "PLUGIN_")
 STRIP_NAMES = {"CLAUDECODE", "CLAUDE_PID", "CLAUDE_EFFORT", "AI_AGENT"}
 KEEP_NAMES = {"CODEX_HOME"}
@@ -115,16 +117,19 @@ def history_since(ws: Path, since: str) -> list[dict]:
     return [e for e in events if datetime.fromisoformat(e["timestamp"]) >= start]
 
 
-def is_invest(event: dict) -> bool:
-    """news-agent owns the cards under invest/; the rest of the workspace belongs to other writers."""
-    return "address" in event and event["address"].split("/", 1)[1].startswith("invest/")
+def invest_addresses(event: dict) -> list[str]:
+    addresses = [event.get("address")]
+    if event.get("event") == "baked":
+        for card in event.get("cards", []):
+            addresses.extend((card.get("source"), card.get("target")))
+    return [a for a in addresses if isinstance(a, str) and a.partition("/")[2].startswith("invest/")]
 
 
 def others_since(ws: Path, since: str) -> list[str]:
     """Warnings for writes outside invest/ since `since`. Other sessions share the workspace, and history does not
     say who wrote what, so these are reported but never fail a run."""
     return [f"其他位置有写入（多半是其他会话）: {e['event']} {e['address']}"
-            for e in history_since(ws, since) if "address" in e and not is_invest(e)]
+            for e in history_since(ws, since) if "address" in e and not invest_addresses(e)]
 
 
 def verify(mem: dict, since: str | None = None, staged_only: bool = False) -> list[str]:
@@ -145,10 +150,10 @@ def verify(mem: dict, since: str | None = None, staged_only: bool = False) -> li
                 problems.append(f"invest 卡片缺少 \"invest\" 标签: {md}")
 
     for e in history_since(ws, since) if since else []:
-        if staged_only and is_invest(e) and e["event"] != "proposed":
+        if staged_only and (addresses := invest_addresses(e)) and e["event"] != "proposed":
             what = ("未经 staging 的直写" if e.get("origin") == "write"
                     else f"绕过审阅的 {BYPASS.get(e['event'], e['event'])}")
-            problems.append(f"定时运行中{what}: {e['address']} ({e.get('op', '')})")
+            problems.append(f"定时运行中{what}: {', '.join(addresses)} ({e.get('op', '')})")
 
     res = mindslice(mem, "validate")
     try:
@@ -241,15 +246,15 @@ def pending_invest(mem: dict) -> list[dict]:
 
 def load_decisions(path: Path, output: str) -> list[dict]:
     """The reviewer's JSON array from its decisions file, else from its final answer."""
-    candidates = [path.read_text(encoding="utf-8")] if path.exists() else []
-    candidates += re.findall(r"\[.*\]", final_text(output) or "", re.S)
+    candidates = ([path.read_text(encoding="utf-8")] if path.exists()
+                  else re.findall(r"\[.*\]", final_text(output) or "", re.S))
     for text in candidates:
         try:
             value = json.loads(text)
         except json.JSONDecodeError:
             continue
-        if isinstance(value, list):
-            return [d for d in value if isinstance(d, dict)]
+        if isinstance(value, list) and all(isinstance(d, dict) for d in value):
+            return value
     return []
 
 
@@ -260,6 +265,7 @@ def run_review(cfg: dict, root: Path, issue: str, harness: str, packet: Path, re
     if nothing under invest/ changed while it ran (writes elsewhere are other sessions' and only warned about);
     changes without a decision stay pending."""
     mem = cfg["memory"]
+    started = now_iso()
     pending = pending_invest(mem)
     if not pending:
         return {"run_id": None, "status": "nothing to review", "problems": [], "decisions": []}
@@ -272,29 +278,46 @@ def run_review(cfg: dict, root: Path, issue: str, harness: str, packet: Path, re
     prompt = render_prompt((root / cfg["paths"]["review_prompt"]).read_text(encoding="utf-8"), changes=changes,
                            decisions=decisions_file, report=report, packet=packet, project=root,
                            workspace=Path(mem["workspace"]).expanduser())
-    started = now_iso()
     res = launch(cfg, root, run_dir, harness, prompt)
     ws = Path(mem["workspace"]).expanduser()
-    problems = [f"审阅期间 invest/ 下有改动，未执行任何决定: {e['event']} {e['address']}"
-                for e in history_since(ws, started) if is_invest(e)]
-    warnings = others_since(ws, started)
-    tampered = bool(problems)
-    decisions = {d.get("address"): d for d in load_decisions(decisions_file, res["output"])}
-    outcome = []
-    for item in pending:
-        d = decisions.pop(item["address"], {})
-        action = None if tampered else d.get("decision")
-        if action in ("apply", "discard"):
-            r = mindslice(mem, action, item["address"])
-            if r.returncode != 0:
-                problems.append(f"{action} 失败: {item['address']}: {r.stderr.strip() or r.stdout.strip()}")
-                action = "failed"
-        else:
-            action = "pending"
-            if not tampered:
-                problems.append(f"审阅未给出决定，保留待审: {item['address']}")
-        outcome.append({"address": item["address"], "decision": action, "reason": d.get("reason", "")})
-    problems += [f"审阅结果含非待审地址，已忽略: {a}" for a in decisions]
+    with Workspace(ws) as engine, engine.lock.exclusive():
+        snapshot = engine.diff()
+        current = [i for i in snapshot["items"] if i["address"].startswith("@overlay/invest/")]
+        problems = [f"审阅期间 invest/ 下有改动，未执行任何决定: {e['event']} {', '.join(addresses)}"
+                    for e in history_since(ws, started) if (addresses := invest_addresses(e))]
+        if not problems and current != pending:
+            problems.append("待审 invest/ 版本已变更，未执行任何决定")
+        warnings = others_since(ws, started)
+        decisions = {}
+        if res["status"] == "ok":
+            for d in load_decisions(decisions_file, res["output"]):
+                address = d.get("address")
+                if not isinstance(address, str) or address in decisions:
+                    problems.append("审阅结果含缺失或重复的地址，未执行任何决定")
+                    break
+                decisions[address] = d
+        blocked = bool(problems) or res["status"] != "ok"
+        outcome, accept, reject = [], [], []
+        for item in pending:
+            address = item["address"]
+            d = decisions.pop(address, {})
+            action = d.get("decision")
+            if blocked or action not in ("apply", "discard"):
+                action = "pending"
+                if not blocked:
+                    problems.append(f"审阅未给出决定，保留待审: {address}")
+            else:
+                (accept if action == "apply" else reject).append(address)
+            outcome.append({"address": address, "decision": action, "reason": d.get("reason", "")})
+        problems += [f"审阅结果含非待审地址，已忽略: {a}" for a in decisions]
+        if accept or reject:
+            try:
+                engine.review(accept, reject, revision=snapshot["revision"])
+            except MindSliceError as exc:
+                problems.append(f"审阅决定未生效: {exc}")
+                for row in outcome:
+                    if row["decision"] in ("apply", "discard"):
+                        row["decision"] = "failed"
     problems += verify(mem)
     (run_dir / "review.md").write_text("| 卡片 | 决定 | 理由 |\n| :--- | :--- | :--- |\n" + "".join(
         f"| {o['address']} | {o['decision']} | {o['reason']} |\n" for o in outcome), encoding="utf-8")

@@ -33,6 +33,8 @@ if "独立审阅员" in prompt:
     if mode == "outsider":
         out = [{"address": "@overlay/prefs/p", "decision": "apply", "reason": "not mine to approve"}]
     decisions.write_text(json.dumps(out))
+    if mode == "fail-after-decisions":
+        sys.exit(1)
     print(json.dumps({"session_id": "fake-review-1", "result": "done"}))
     sys.exit(0)
 

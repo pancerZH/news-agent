@@ -42,6 +42,13 @@ def test_run_reviews_staged_changes_and_leaves_others_alone(project, workspace, 
     assert "@overlay/invest/theses/bad | discard | fake" in log.read_text()
 
 
+def test_failed_reviewer_cannot_apply_its_decisions_file(project, workspace, monkeypatch):
+    args = setup(project, workspace, monkeypatch)
+    monkeypatch.setenv("FAKE_REVIEW_MODE", "fail-after-decisions")
+    assert cli.main([*args, "run", "--edition", "am"]) == 1
+    assert "@overlay/invest/theses/ai-compute-capex" in pending(workspace)
+
+
 def test_reviewer_that_changes_memory_gets_nothing_executed(project, workspace, monkeypatch, capsys):
     args = setup(project, workspace, monkeypatch)
     monkeypatch.setenv("FAKE_REVIEW_MODE", "tamper")
@@ -93,3 +100,13 @@ def test_review_command_ignores_foreign_decisions_and_keeps_undecided_pending(pr
     assert "审阅未给出决定，保留待审: @overlay/invest/theses/ai-compute-capex" in out
     assert sorted(pending(workspace)) == ["@overlay/invest/theses/ai-compute-capex", "@overlay/invest/theses/x",
                                           "@overlay/prefs/p"]
+
+
+def test_verification_reports_the_engine_bake_event(project, workspace, monkeypatch):
+    from news_agent import runner
+
+    setup(project, workspace, monkeypatch)
+    started = runner.now_iso()
+    ms(workspace, "bake", "@invest", "--prefix", "invest/", "--yes")
+    problems = runner.verify({"mindslice": shutil.which("mindslice"), "workspace": workspace}, started, staged_only=True)
+    assert any("绕过审阅的 bake" in p and "@invest/invest/" in p for p in problems)
