@@ -3,6 +3,7 @@ for the memory review: staging is enforced by this code, not asked for in the pr
 
 import json
 import re
+from collections import Counter
 from pathlib import Path
 
 from .runner import invest_slice_dir, mindslice
@@ -11,6 +12,9 @@ ID = re.compile(r"invest/watchlist|invest/(macro|theses|entities)/[a-z0-9][a-z0-
 OPS = ("create", "replace", "patch", "append")
 LINK = re.compile(r"\[\[([^\]|]+)")
 LISTS = {"tags": "--tag", "aliases": "--alias", "extends": "--extends", "supersedes": "--supersedes"}
+SECTIONS = ("**核心假设 (Premise)**", "**当前状态与置信度 (Conviction)**", "**关键验证记录 (Evidence)**",
+            "**预设证伪条件 (Kill Criteria)**")
+DATED = re.compile(r"\[\d{4}-\d{2}-\d{2}\]")
 
 
 def _texts(w: dict) -> list[str]:
@@ -59,6 +63,41 @@ def check(w: dict, ws: Path, baked: Path | None, batch: set[str]) -> list[str]:
     return problems + check_links(w, ws, baked, batch)
 
 
+def _body(w: dict) -> str:
+    content = w.get("content") or ""
+    return "\n".join(content) if isinstance(content, list) else content
+
+
+def current_body(mem: dict, card: str) -> str:
+    try:
+        return json.loads(mindslice(mem, "read", card).stdout).get("body", "")
+    except json.JSONDecodeError:
+        return ""
+
+
+def check_thesis(mem: dict, w: dict) -> list[str]:
+    """Thesis cards keep their four sections, and no change drops a section or a dated evidence entry: a rewrite is
+    compared with the current card, a patch edit with the text it replaces."""
+    card, op = w["id"], w.get("op", "create")
+    if not card.startswith("invest/theses/"):
+        return []
+    if op == "patch":
+        pairs = [(e.get("old", ""), e.get("new", "")) for e in w["edits"]]
+    else:
+        text = _body(w)
+        missing = [s for s in SECTIONS if s not in text]
+        if missing:
+            return [f"{card}: 主线卡正文要有这四段：{'、'.join(SECTIONS)}；缺少 {'、'.join(missing)}"]
+        pairs = [(current_body(mem, card), text)] if op == "replace" else []
+    problems = []
+    for old, new in pairs:
+        lost = [s for s in SECTIONS if s in old and s not in new]
+        lost += sorted((Counter(DATED.findall(old)) - Counter(DATED.findall(new))).elements())
+        if lost:
+            problems.append(f"{card}: 改动丢掉了原有的 {'、'.join(lost)}；四段结构和带日期的历史证据要原样保留")
+    return problems
+
+
 def write_args(w: dict) -> list[str]:
     op = w.get("op", "create")
     args = ["write", w["id"], "--op", op, "--stage", "--reason", w["reason"]]
@@ -66,8 +105,7 @@ def write_args(w: dict) -> list[str]:
         if w.get(key):
             args += [f"--{key}", w[key]]
     if w.get("content"):
-        content = w["content"]
-        args += ["--content", "\n".join(content) if isinstance(content, list) else content]
+        args += ["--content", _body(w)]
     tags = list(w.get("tags") or [])
     if (op == "create" or "tags" in w) and "invest" not in tags:
         tags.insert(0, "invest")
@@ -84,7 +122,9 @@ def propose(mem: dict, writes: list[dict]) -> tuple[list[str], list[str]]:
     ws = Path(mem["workspace"]).expanduser()
     baked = invest_slice_dir(ws)
     batch = {w["id"] for w in writes if isinstance(w, dict) and isinstance(w.get("id"), str)}
-    problems = [p for w in writes for p in check(w, ws, baked, batch)]
+    problems = []
+    for w in writes:  # the thesis checks need a well-formed change
+        problems += check(w, ws, baked, batch) or check_thesis(mem, w)
     if problems:
         return [], problems
     staged = []

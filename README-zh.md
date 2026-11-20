@@ -17,6 +17,7 @@
 | `uv run news-agent search 关键词 [--days 30]` | 历史条目关键词检索 |
 | `uv run news-agent review` | 让独立会话审阅暂存的 `invest/*` 变更，由程序执行 apply/discard（`run` 结束后自动执行） |
 | `uv run news-agent propose changes.json` | Harness 修改记忆的唯一途径：检查 `invest/*` 变更（JSON，字段同 MindSlice `write`）后暂存待审 |
+| `uv run news-agent mem search\|read\|diff ...` | Harness 在命令行读记忆的途径：只读，工作区取自 `config.toml` |
 | `uv run news-agent runs` | 最近的运行记录、日志目录与续聊命令 |
 | `uv run news-agent verify` | `invest/` 记忆护栏校验（无 always、卡片都带 `invest` 标签、validate 零错误、无断链） |
 | `uv run news-agent init-memory` | 幂等创建 watchlist / 宏观 / 主线 / 实体种子卡 |
@@ -33,7 +34,7 @@
 - 主线卡正文：`核心假设 (Premise)` / `当前状态与置信度 (Conviction)` / `关键验证记录 (Evidence)`（`[YYYY-MM-DD] ...`）/ `预设证伪条件 (Kill Criteria)`。
 - 实体卡 `aliases` 必填中英文名、Ticker、核心产品代号（便于 BM25 词法召回）。
 - 链接：已在 `@invest` 里的卡片写 `[[@invest/invest/...]]`，只在 `@overlay` 里的写 `[[invest/...]]`。
-- 交互会话中经用户确认的变更直接写 `@overlay/invest/*`；Harness 运行只能经 `news-agent propose` 写记忆，它逐条检查（卡片 id、op、`load`、`invest` 标签、链接；主线卡不许 append）后一律暂存；agy 会话里 MindSlice 自带的 write 被禁用（`config.toml` 里的 `--settings` deny 规则），`verify` 仍会标出任何对 `invest/` 的直写。运行结束后由独立审阅会话逐条判断（出处、慢变量、去重、结构、结论克制），审阅 Agent 只写决定，由程序只对 `@overlay/invest/*` 执行 apply/discard；审阅期间 `invest/` 下若有改动则不执行任何决定。记忆库与其他会话共用，运行或审阅期间 `invest/` 以外的写入只打印为警告（`~`），不会让运行失败。审阅没有完成（决定被拦下、保留待审或执行失败）时，另发一封简短通知给发信账号本身（或 `smtp.toml` 里的 `notify`），不发给日报的 `to` 列表。审阅记录在 `data/runs/*-review-*/review.md`。
+- 交互会话中经用户确认的变更直接写 `@overlay/invest/*`；Harness 运行只能经 `news-agent propose` 写记忆，它逐条检查（卡片 id、op、`load`、`invest` 标签、链接；主线卡不许 append，必须保留四段，任何改动都不能丢掉带日期的历史证据）后一律暂存。agy 会话里 MindSlice 自带的 write 和整个 `mindslice` 命令行都被禁用（`config.toml` 里的 `--settings` deny 规则），读记忆用 MCP search/read 或 `news-agent mem`；`verify` 仍会标出运行期间除暂存提议以外的任何 `invest/` 改动（直写、apply、discard 或 bake）。运行结束后由独立审阅会话逐条判断（出处、慢变量、去重、结构、结论克制），审阅 Agent 只写决定，由程序只对 `@overlay/invest/*` 执行 apply/discard；审阅期间 `invest/` 下若有改动则不执行任何决定。记忆库与其他会话共用，运行或审阅期间 `invest/` 以外的写入只打印为警告（`~`），不会让运行失败。审阅没有完成（决定被拦下、保留待审或执行失败）时，另发一封简短通知给发信账号本身（或 `smtp.toml` 里的 `notify`），不发给日报的 `to` 列表。审阅记录在 `data/runs/*-review-*/review.md`。
 - 归档：`mindslice bake -w ~/mindslice @invest --prefix invest/`。
 
 ## 定时运行（systemd 用户定时器示例：每天 07:30 早报、18:00 晚报，按系统本地时间）

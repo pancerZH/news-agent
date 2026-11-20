@@ -1,8 +1,9 @@
-"""news-agent CLI: init-memory / prep / run / review / propose / search / show / read / claims / voicecheck / verify / runs /
-mail."""
+"""news-agent CLI: init-memory / prep / run / review / propose / mem / search / show / read / claims / voicecheck / verify /
+runs / mail."""
 
 import argparse
 import json
+import subprocess
 import sys
 import tomllib
 from concurrent.futures import ThreadPoolExecutor
@@ -204,6 +205,16 @@ def review(cfg: dict, root: Path, issue: str, harness: str, packet: Path, report
     return False
 
 
+def read_memory(mem: dict, args) -> int:
+    """`news-agent mem`: the harness sessions' only `mindslice` on the command line (their own is denied in config.toml).
+    Read only, with the workspace filled in, so a session never builds a `mindslice` command itself."""
+    extra = {"search": lambda: [" ".join(args.terms), "-k", str(args.k), "--offset", str(args.offset),
+                                *(a for t in args.tag for a in ("--tag", t))],
+             "read": lambda: args.addresses, "diff": lambda: []}[args.mem_cmd]()
+    cmd = [mem["mindslice"], "-w", str(Path(mem["workspace"]).expanduser()), args.mem_cmd, *extra]
+    return subprocess.run(cmd, env=runner.clean_env(), stdin=subprocess.DEVNULL).returncode
+
+
 # ---------------------------------------------------------------- search / show / runs
 
 
@@ -243,6 +254,15 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--harness")
     p = sub.add_parser("propose", help="check invest/* memory changes (JSON) and stage them for review")
     p.add_argument("source", help="JSON file with one change or a list of them ('-' = stdin)")
+    p = sub.add_parser("mem", help="read the MindSlice memory: search, read cards, or list staged changes (diff)")
+    msub = p.add_subparsers(dest="mem_cmd", required=True)
+    q = msub.add_parser("search", help="lexical search over the memory cards")
+    q.add_argument("terms", nargs="+")
+    q.add_argument("--tag", action="append", default=[], help="require this tag (repeatable)")
+    q.add_argument("-k", type=int, default=10)
+    q.add_argument("--offset", type=int, default=0)
+    msub.add_parser("read", help="print cards in full").add_argument("addresses", nargs="+")
+    msub.add_parser("diff", help="list the staged changes still awaiting review")
     p = sub.add_parser("search", help="keyword search over collected items")
     p.add_argument("terms", nargs="+")
     p.add_argument("--days", type=int, default=30)
@@ -308,6 +328,9 @@ def main(argv: list[str] | None = None) -> int:
         for prob in problems:
             print(f"  ! {prob}", file=sys.stderr)
         return 1 if problems else 0
+
+    if args.cmd == "mem":
+        return read_memory(cfg["memory"], args)
 
     if args.cmd == "mail":
         report = root / cfg["paths"]["reports"] / f"{issue}.md"

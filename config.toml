@@ -134,10 +134,11 @@ default = "agy"
 timeout_minutes = 45
 
 [harness.agy]
-# 记忆只能经 `news-agent propose` 写入（一律进 staging/）：本会话禁用 MindSlice 的直写通道
+# 记忆只能经 `news-agent propose` 写入（一律进 staging/），命令行读记忆用 `news-agent mem`：本会话禁用 MindSlice 的
+# MCP write 和整个 mindslice 命令行（deny 按前缀匹配，只禁 `mindslice write` 挡不住 `mindslice -w X write` 和 apply）
 cmd = ["agy", "--print={prompt}", "--model", "gemini-4-hydrogen-high", "--output-format", "json",
        "--dangerously-skip-permissions", "--disable-slash-commands", "--settings",
-       '{"permissions":{"deny":["mcp(mindslice_mindslice/write)","command(mindslice write)","command(uv run mindslice write)"]}}']
+       '{"permissions":{"deny":["mcp(mindslice_mindslice/write)","command(mindslice)","command(uv run mindslice)","command(.venv/bin/mindslice)"]}}']
 resume = "agy --conversation {session_id}"
 
 [harness.claude]

@@ -4,7 +4,7 @@ import tomllib
 
 import pytest
 
-from news_agent.cli import init_memory, load_config
+from news_agent.cli import init_memory, load_config, main
 from news_agent.runner import now_iso, others_since, verify
 
 
@@ -56,6 +56,32 @@ def test_history_checks_out_of_bounds_and_unstaged_writes(cfg, workspace):
     assert any("@overlay/projects/elsewhere" in w for w in others_since(workspace, since))
     assert not any("invest/" in w for w in others_since(workspace, since))
     assert "invest/theses/direct" not in "\n".join(verify(mem, since=since, staged_only=False))
+
+
+def test_apply_or_discard_in_a_scheduled_run_skips_the_review(cfg, workspace):
+    mem = cfg[0]["memory"]
+    since = now_iso()
+    write(workspace, "invest/theses/a", "- x", "--tag", "invest", "--stage")
+    write(workspace, "invest/theses/b", "- x", "--tag", "invest", "--stage")
+    ms(workspace, "apply", "@overlay/invest/theses/a")
+    ms(workspace, "discard", "@overlay/invest/theses/b")
+    problems = "\n".join(verify(mem, since=since, staged_only=True))
+    assert "绕过审阅的 apply: @overlay/invest/theses/a" in problems
+    assert "绕过审阅的 discard: @overlay/invest/theses/b" in problems
+
+
+def test_mem_reads_the_configured_workspace_and_nothing_else(project, workspace, capfd):
+    config = ["--config", str(project / "config.toml")]
+    write(workspace, "invest/watchlist", "- NVDA Blackwell", "--tag", "invest")
+    write(workspace, "invest/theses/p", "- pending", "--tag", "invest", "--stage")
+    assert main([*config, "mem", "search", "NVDA", "Blackwell", "--tag", "invest"]) == 0
+    assert main([*config, "mem", "read", "invest/watchlist"]) == 0
+    assert main([*config, "mem", "diff"]) == 0
+    out = capfd.readouterr().out
+    assert "@overlay/invest/watchlist" in out and "- NVDA Blackwell" in out and "invest/theses/p" in out
+    for cmd in (["write", "invest/x"], ["apply", "@overlay/invest/theses/p"], ["-w", "/tmp", "read", "x"]):
+        with pytest.raises(SystemExit):
+            main([*config, "mem", *cmd])
 
 
 def test_links_after_bake_must_be_mount_qualified(cfg, workspace):

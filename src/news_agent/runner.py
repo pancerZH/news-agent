@@ -12,6 +12,7 @@ from pathlib import Path
 STRIP_PREFIXES = ("ANTIGRAVITY_", "CLAUDE_CODE_", "CODEX_", "MINDSLICE_PLUGIN_", "PLUGIN_")
 STRIP_NAMES = {"CLAUDECODE", "CLAUDE_PID", "CLAUDE_EFFORT", "AI_AGENT"}
 KEEP_NAMES = {"CODEX_HOME"}
+BYPASS = {"applied": "apply", "discarded": "discard", "baked": "bake"}  # history events, as commands
 SESSION_KEYS = ("session_id", "conversation_id", "thread_id", "sessionId", "conversationId")
 
 
@@ -127,8 +128,9 @@ def others_since(ws: Path, since: str) -> list[str]:
 
 
 def verify(mem: dict, since: str | None = None, staged_only: bool = False) -> list[str]:
-    """Problems with the invest/* memory: always-loaded or untagged cards, unstaged invest/ writes in a scheduled
-    run since `since`, validate errors, broken links. Only invest/ is checked: tags are search facets that any
+    """Problems with the invest/* memory: always-loaded or untagged cards, any invest/ change other than a staged
+    proposal in a scheduled run since `since` (a direct write, or an apply / discard / bake that skips the review),
+    validate errors, broken links. Only invest/ is checked: tags are search facets that any
     writer may use, and writes elsewhere are other sessions' (see others_since)."""
     ws = Path(mem["workspace"]).expanduser()
     problems = []
@@ -143,8 +145,10 @@ def verify(mem: dict, since: str | None = None, staged_only: bool = False) -> li
                 problems.append(f"invest 卡片缺少 \"invest\" 标签: {md}")
 
     for e in history_since(ws, since) if since else []:
-        if e.get("origin") == "write" and is_invest(e) and staged_only and e["event"] == "applied":
-            problems.append(f"定时运行中未经 staging 的直写: {e['address']} ({e['op']})")
+        if staged_only and is_invest(e) and e["event"] != "proposed":
+            what = ("未经 staging 的直写" if e.get("origin") == "write"
+                    else f"绕过审阅的 {BYPASS.get(e['event'], e['event'])}")
+            problems.append(f"定时运行中{what}: {e['address']} ({e.get('op', '')})")
 
     res = mindslice(mem, "validate")
     try:

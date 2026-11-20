@@ -5,7 +5,7 @@
 - **待审变更**：`{{changes}}`（JSON 数组：每条含卡片地址、变更类型、提出理由与 diff）。
 - **当期报告**：`{{report}}`；**当期数据包**：`{{packet}}`。
 - **核对出处**：`uv run news-agent show C<簇编号>`（完整条目）、`uv run news-agent read <条目编号>`（全文）、`uv run news-agent search <关键词> --days 30`。
-- **现有记忆（只读）**：`uv run mindslice -w {{workspace}} read <地址>`、`uv run mindslice -w {{workspace}} search <关键词>`。
+- **现有记忆（只读）**：`uv run news-agent mem read <地址> ...`、`uv run news-agent mem search <关键词>`（本会话不能直接运行 `mindslice` 命令）。
 
 ## 审阅标准
 
